@@ -1,5 +1,7 @@
 toml
-pkg_resources
+# pkg_resources
 cyclonedx-bom
 safety
 pytest
+setuptools>=58.0.0
+importlib-metadata; python_version < '3.8'
