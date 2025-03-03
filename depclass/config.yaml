@@ -1,0 +1,39 @@
+validation_rules:
+  enable_cve_check: true
+  enable_abandoned_check: true
+  enable_typosquatting_check: true
+  enable_version_check: true
+  enable_mitre_check: true  # New: Check for MITRE Python weaknesses
+
+abandoned_packages:
+  - "oldlib"
+  - "unmaintained-pkg"
+
+typosquatting_blacklist:
+  - "reqquests"
+  - "numpyy"
+  - "dj4ngo"
+
+min_versions:
+  flask: "2.0.0"
+  requests: "2.26.0"
+  numpy: "1.21.0"
+
+sources:
+  safety_db: "https://pyup.io/api/v1/safety/db/"
+  osv_vulnerabilities: "https://api.osv.dev/v1/query"
+  mitre_weaknesses: "https://cwe.mitre.org/data/published/cwe-python.json"  # New: MITRE Python CWE list
+
+mitre_weaknesses:
+  # List of Python-specific weaknesses from MITRE CWE database
+  - CWE-79  # Improper Neutralization of Input During Web Page Generation (XSS)
+  - CWE-89  # SQL Injection
+  - CWE-94  # Code Injection
+  - CWE-20  # Improper Input Validation
+  - CWE-502  # Deserialization of Untrusted Data
+  - CWE-829  # Inclusion of Functionality from Untrusted Control Sphere
+  - CWE-915  # Improperly Controlled Modification of Dynamically-Determined Object Attributes
+
+output:
+  report_file: "validation_report.json"
+  sbom_file: "sbom.json"
