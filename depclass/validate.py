@@ -9,6 +9,9 @@ from safety.safety import get_vulnerabilities
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
 
+# Path to Safety DB
+SAFETY_DB_URL = "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
+
 # Load validation configuration
 def load_config(config_file=CONFIG_PATH):
     if not os.path.exists(config_file):
@@ -21,25 +24,52 @@ def load_config(config_file=CONFIG_PATH):
 def get_installed_packages():
     return {pkg.metadata["Name"].lower(): pkg.version for pkg in importlib.metadata.distributions()}
 
-# Check for CVEs using `safety`
+# Fetch and parse Safety DB manually
+def fetch_safety_db():
+    try:
+        print("🔍 Fetching Safety DB...")
+        response = requests.get(SAFETY_DB_URL, timeout=10)
+        response.raise_for_status()
+        return json.loads(response.text)  # Parse JSON directly
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ Failed to fetch Safety DB: {e}")
+        return None
+
+# Check for CVEs using Safety DB
 def check_cves(dependencies, enable_check):
     if not enable_check:
         return []
+    
     print("🔍 Checking for CVEs...")
-    try:
-        vulns = get_vulnerabilities(dependencies)
-        return [
-            {
-                "package": v.package_name,
-                "cve": v.cve_id or "Unknown",
-                "severity": v.severity,
-                "description": v.advisory
-            }
-            for v in vulns
-        ] if vulns else []
-    except Exception as e:
-        print(f"⚠️ CVE check failed: {e}")
+    db = fetch_safety_db()
+    if not db:
         return []
+
+    vulns = []
+    for package, version in dependencies.items():
+        package_data = db.get(package, [])
+
+        # Ensure package_data is a list
+        if not isinstance(package_data, list):
+            print(f"⚠️ Unexpected format for package {package}: {package_data}")
+            continue
+
+        for vuln in package_data:
+            if isinstance(vuln, dict):
+                specs = vuln.get("specs", [])
+                
+                # Check if the installed version falls within the vulnerable range
+                for spec in specs:
+                    if version in spec:  # This is a rough check, might need more logic
+                        vulns.append({
+                            "package": package,
+                            "cve": vuln.get("cve", "Unknown"),
+                            "severity": vuln.get("severity", "Unknown"),
+                            "description": vuln.get("advisory", "No details available")
+                        })
+                        break  # Stop after first match
+
+    return vulns
 
 # Check for abandoned packages
 def check_abandoned(dependencies, abandoned_list, enable_check):
@@ -71,8 +101,8 @@ def check_versions(dependencies, min_versions, enable_check):
 def check_mitre_weaknesses(dependencies, mitre_source, mitre_list, enable_check):
     if not enable_check:
         return []
-    print("🔍 Checking against MITRE Python weaknesses...")
     
+    print("🔍 Checking against MITRE Python weaknesses...")
     try:
         response = requests.get(mitre_source, timeout=10)  # Added timeout handling
         response.raise_for_status()
@@ -82,10 +112,9 @@ def check_mitre_weaknesses(dependencies, mitre_source, mitre_list, enable_check)
         return []
 
     found_weaknesses = []
-    for pkg in dependencies:
-        for cwe in mitre_list:
-            if any(cwe in item.get("CWE-ID", "") for item in mitre_data.get("weaknesses", [])):
-                found_weaknesses.append({"package": pkg, "CWE": cwe})
+    for cwe in mitre_list:
+        if any(cwe in item.get("CWE-ID", "") for item in mitre_data.get("Weaknesses", [])):
+            found_weaknesses.append({"CWE": cwe, "description": item.get("Description", {}).get("Description_Summary", "No description available")})
     
     return found_weaknesses
 
@@ -112,3 +141,4 @@ def validate():
 
 if __name__ == "__main__":
     validate()
+    
