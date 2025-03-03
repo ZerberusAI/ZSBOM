@@ -3,7 +3,6 @@ import json
 import requests
 import pkg_resources
 from safety.safety import get_vulnerabilities
-from safety.formatter import VulnerabilityFormatter
 
 # Load validation configuration
 def load_config(config_file="config.yaml"):
