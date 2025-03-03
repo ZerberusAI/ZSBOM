@@ -1,0 +1,34 @@
+name: ZSBOM CI/CD
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+    - name: Run unit tests
+      run: |
+        pytest tests/
+    - name: Generate SBOM
+      run: |
+        python -m depclass.sbom
+    - name: Upload SBOM artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: SBOM Report
+        path: sbom.json
+    - name: Security Scan
+      run: |
+        pip install safety
+        safety check --full-report

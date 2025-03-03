@@ -1,0 +1,5 @@
+[tool.poetry]
+name = "zsbom"
+version = "0.1.0"
+description = "Zerberus SBOM Automation Framework"
+authors = ["ZerberusAI"]

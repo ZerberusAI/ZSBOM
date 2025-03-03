@@ -1,0 +1,5 @@
+toml
+pkg_resources
+cyclonedx-bom
+safety
+pytest
