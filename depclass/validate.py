@@ -1,3 +1,48 @@
+"""
+ZSBOM Dependency Validation Module
+
+This script validates Python dependencies against:
+1. Known **CVEs (using Safety DB)**
+2. **Abandoned packages**
+3. **Typosquatting risks**
+4. **Version compliance**
+5. **CWE Weaknesses (using MITRE/NIST CWE Data)**
+
+---
+🚀 **TODO: Externalize Resources for Future Scalability**
+1️⃣ **CWE Data Source:**
+   - Currently using **NIST CWE API** (fallback from MITRE).
+   - Future enhancement: 
+     - Allow configuring the API URL via `config.yaml` instead of hardcoding it.
+     - Support downloading and caching **MITRE CWE JSON** for offline analysis.
+  
+2️⃣ **Safety DB (CVE Checks)**
+   - Current source: **PyUp Safety DB (GitHub)**
+   - Future enhancements:
+     - Allow users to specify **custom Safety DB URLs** via `config.yaml`.
+     - Implement **local caching** of Safety DB to reduce network dependency.
+     - Add support for **NVD CVE API** as an alternative.
+
+3️⃣ **Local Database Support**
+   - Instead of making **live API calls every time**, enable:
+     - **Local SQLite/PostgreSQL DB** for caching vulnerability data.
+     - Automatic **periodic sync jobs** to refresh local CVE and CWE data.
+     - A structured way to store **scan results** for audit tracking.
+
+4️⃣ **SAFE List & Custom Blocklists**
+   - Currently, **abandoned packages and typosquatting lists** are hardcoded.
+   - Future improvements:
+     - Support fetching **SAFE lists** (known good packages) from an external source.
+     - Allow **user-defined blacklists** via `config.yaml` or API.
+
+5️⃣ **Logging & Alerting**
+   - Add **verbose logging** for better debugging.
+   - Option to **email/slack alerts** when vulnerabilities are found.
+
+---
+
+"""
+
 import os
 import yaml
 import json
@@ -9,8 +54,11 @@ from safety.safety import get_vulnerabilities
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
 
-# Path to Safety DB
+# Path to Safety DB (TODO: Externalize to config.yaml)
 SAFETY_DB_URL = "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
+
+# Alternative CWE Source (TODO: Support MITRE CWE when available)
+NIST_CWE_URL = "https://services.nvd.nist.gov/rest/json/cwe/list/2.0"
 
 # Load validation configuration
 def load_config(config_file=CONFIG_PATH):
@@ -97,24 +145,34 @@ def check_versions(dependencies, min_versions, enable_check):
             issues[pkg] = {"installed": installed_version, "required": min_version}
     return issues
 
-# Fetch MITRE Python Weaknesses
-def check_mitre_weaknesses(dependencies, mitre_source, mitre_list, enable_check):
+# Fetch MITRE CWE Weaknesses (Fallback to NIST if MITRE is down)
+def fetch_cwe_data():
+    try:
+        print("🔍 Fetching CWE data...")
+        response = requests.get(NIST_CWE_URL, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ CWE fetch failed: {e}")
+        return None
+
+# Check against CWE Weaknesses
+def check_cwe_weaknesses(dependencies, enable_check):
     if not enable_check:
         return []
     
-    print("🔍 Checking against MITRE Python weaknesses...")
-    try:
-        response = requests.get(mitre_source, timeout=10)  # Added timeout handling
-        response.raise_for_status()
-        mitre_data = response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"⚠️ MITRE fetch failed: {e}")
+    print("🔍 Checking against CWE weaknesses...")
+    cwe_data = fetch_cwe_data()
+    if not cwe_data:
         return []
 
     found_weaknesses = []
-    for cwe in mitre_list:
-        if any(cwe in item.get("CWE-ID", "") for item in mitre_data.get("Weaknesses", [])):
-            found_weaknesses.append({"CWE": cwe, "description": item.get("Description", {}).get("Description_Summary", "No description available")})
+    for weakness in cwe_data.get("cwe_list", {}).get("CWE_Items", []):
+        cwe_id = weakness.get("cwe_id", "Unknown")
+        description = weakness.get("description", "No description available")
+
+        # Add CWE matches to results
+        found_weaknesses.append({"CWE-ID": cwe_id, "description": description})
     
     return found_weaknesses
 
@@ -128,9 +186,9 @@ def validate():
         "abandoned_packages": check_abandoned(dependencies, config["abandoned_packages"], config["validation_rules"]["enable_abandoned_check"]),
         "typosquatting_issues": check_typosquatting(dependencies, config["typosquatting_blacklist"], config["validation_rules"]["enable_typosquatting_check"]),
         "version_issues": check_versions(dependencies, config["min_versions"], config["validation_rules"]["enable_version_check"]),
-        "mitre_weaknesses": check_mitre_weaknesses(
-            dependencies, config["sources"]["mitre_weaknesses"], config["mitre_weaknesses"], config["validation_rules"]["enable_mitre_check"]
-        ),
+        # "cwe_weaknesses": check_cwe_weaknesses(config["validation_rules"]["enable_mitre_check"]),
+        "cwe_weaknesses": check_cwe_weaknesses(dependencies, config["validation_rules"]["enable_mitre_check"]),
+
     }
 
     # Save results to JSON file
@@ -141,4 +199,3 @@ def validate():
 
 if __name__ == "__main__":
     validate()
-    
