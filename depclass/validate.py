@@ -49,6 +49,28 @@ import json
 import requests
 import importlib.metadata  # Replaces deprecated pkg_resources
 from safety.safety import get_vulnerabilities
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("zsbom.log"),
+        logging.StreamHandler()
+    ]
+)
+
+def fetch_safety_db():
+    logging.info("Fetching Safety DB...")
+    try:
+        response = requests.get(SAFETY_DB_URL, timeout=10)
+        response.raise_for_status()
+        logging.info("✅ Safety DB fetched successfully.")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"⚠️ Failed to fetch Safety DB: {e}")
+        return None
+
 
 # Resolve path to config.yaml in the root directory
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
