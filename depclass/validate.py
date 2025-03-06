@@ -9,33 +9,33 @@ This script validates Python dependencies against:
 5. **CWE Weaknesses (using MITRE/NIST CWE Data)**
 
 ---
-🚀 **TODO: Externalize Resources for Future Scalability**
-1️⃣ **CWE Data Source:**
+**TODO: Externalize Resources for Future Scalability**
+ **CWE Data Source:**
    - Currently using **NIST CWE API** (fallback from MITRE).
    - Future enhancement: 
      - Allow configuring the API URL via `config.yaml` instead of hardcoding it.
      - Support downloading and caching **MITRE CWE JSON** for offline analysis.
   
-2️⃣ **Safety DB (CVE Checks)**
+ **Safety DB (CVE Checks)**
    - Current source: **PyUp Safety DB (GitHub)**
    - Future enhancements:
      - Allow users to specify **custom Safety DB URLs** via `config.yaml`.
      - Implement **local caching** of Safety DB to reduce network dependency.
      - Add support for **NVD CVE API** as an alternative.
 
-3️⃣ **Local Database Support**
+ **Local Database Support**
    - Instead of making **live API calls every time**, enable:
      - **Local SQLite/PostgreSQL DB** for caching vulnerability data.
      - Automatic **periodic sync jobs** to refresh local CVE and CWE data.
      - A structured way to store **scan results** for audit tracking.
 
-4️⃣ **SAFE List & Custom Blocklists**
+ **SAFE List & Custom Blocklists**
    - Currently, **abandoned packages and typosquatting lists** are hardcoded.
    - Future improvements:
      - Support fetching **SAFE lists** (known good packages) from an external source.
      - Allow **user-defined blacklists** via `config.yaml` or API.
 
-5️⃣ **Logging & Alerting**
+ **Logging & Alerting**
    - Add **verbose logging** for better debugging.
    - Option to **email/slack alerts** when vulnerabilities are found.
 

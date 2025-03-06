@@ -10,5 +10,5 @@
     "abandoned_packages": [],
     "typosquatting_issues": [],
     "version_issues": {},
-    "mitre_weaknesses": []
+    "cwe_weaknesses": []
 }
