@@ -1,0 +1,6 @@
+2025-04-02 22:03:56,978 - INFO - 🔍 Fetching fresh Safety DB...
+2025-04-02 22:03:57,303 - INFO - ✅ Safety DB fetched successfully, {'advisory': 'PyUp.io metadata', 'base_domain': 'https://pyup.io', 'timestamp': 1743487231} vulnerabilities found
+2025-04-02 22:03:57,340 - INFO - 🔍 Fetching fresh CWE data...
+2025-04-02 22:04:01,513 - INFO - ✅ Successfully parsed 957 CWE entries from MITRE
+2025-04-02 22:04:01,528 - INFO - Scan results stored with ID: 20250402_220401
+2025-04-02 22:04:02,316 - INFO - ✅ Google Chat notification sent successfully
