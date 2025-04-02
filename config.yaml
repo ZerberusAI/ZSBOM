@@ -37,3 +37,21 @@ mitre_weaknesses:
 output:
   report_file: "validation_report.json"
   sbom_file: "sbom.json"
+
+api_endpoints:
+  cwe:
+    primary: "https://cwe.mitre.org/data/xml/cwec_latest.xml"
+    fallback: "https://services.nvd.nist.gov/rest/json/cwe/list/2.0"
+  safety_db: "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
+
+caching:
+  enabled: true
+  database: "sqlite"  # or "postgresql"
+  path: ".cache/zsbom.db"
+  ttl_hours: 24
+
+notifications:
+  gchat:
+    enabled: true
+    webhook_url: "https://chat.googleapis.com/v1/spaces/AAAAdzD-Yps/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=goTzQWpHvNVc8t7XnpCrDBr9LgTWTa7Im0VtIkVUqaA"  # Add your Google Chat webhook URL here
+    notification_level: "critical"  # Options: all, critical, none
