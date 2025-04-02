@@ -1,0 +1,6 @@
+*/__pycache__/*
+venv
+validation_report.json
+.cache
+zsbom.log
+zsbom.log
