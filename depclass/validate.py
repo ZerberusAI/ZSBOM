@@ -86,7 +86,8 @@ def fetch_safety_db(config):
         response = requests.get(config['api_endpoints']['safety_db'], timeout=10)
         response.raise_for_status()
         data = response.json()
-        logging.info(f"✅ Safety DB fetched successfully, {list(data.values())[0]} vulnerabilities found")
+        vulnerabilities_count = len(data.get('vulnerabilities', []))
+        logging.info(f"✅ Safety DB fetched successfully, {vulnerabilities_count} vulnerabilities found")
         if config['caching']['enabled']:
             cache.cache_data('safety_db', data)
             
