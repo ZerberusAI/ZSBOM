@@ -1,0 +1,80 @@
+{
+    "cve_issues": [
+        {
+            "package": "pip",
+            "cve": "PVE-2025-75180",
+            "severity": "Unknown",
+            "description": "Pip solves a security vulnerability that previously allowed maliciously crafted wheel files to execute unauthorized code during installation."
+        },
+        {
+            "package": "jinja2",
+            "cve": "CVE-2025-27516",
+            "severity": "Unknown",
+            "description": "Prior to 3.1.6, an oversight in how the Jinja sandboxed environment interacts with the |attr filter allows an attacker that controls the content of a template to execute arbitrary Python code. To exploit the vulnerability, an attacker needs to control the content of a template. Whether that is the case depends on the type of application using Jinja. This vulnerability impacts users of applications which execute untrusted templates. Jinja's sandbox does catch calls to str.format and ensures they don't escape the sandbox. However, it's possible to use the |attr filter to get a reference to a string's plain format method, bypassing the sandbox. After the fix, the |attr filter no longer bypasses the environment's attribute lookup. This vulnerability is fixed in 3.1.6."
+        }
+    ],
+    "abandoned_packages": [],
+    "typosquatting_issues": [],
+    "version_issues": {},
+    "cwe_weaknesses": [
+        {
+            "cwe_id": "CWE-20",
+            "name": "Improper Input Validation",
+            "description": "The product receives input or data, but it does\n        not validate or incorrectly validates that the input has the\n        properties that are required to process the data safely and\n        correctly.",
+            "affected_packages": [
+                "requests",
+                "referencing"
+            ],
+            "likelihood": "Unknown",
+            "consequences": [
+                {
+                    "scope": [
+                        "Availability"
+                    ],
+                    "impact": [
+                        "DoS: Crash, Exit, or Restart",
+                        "DoS: Resource Consumption (CPU)",
+                        "DoS: Resource Consumption (Memory)"
+                    ],
+                    "note": "An attacker could provide unexpected values and cause a program crash or excessive consumption of resources, such as memory and CPU."
+                },
+                {
+                    "scope": [
+                        "Confidentiality"
+                    ],
+                    "impact": [
+                        "Read Memory",
+                        "Read Files or Directories"
+                    ],
+                    "note": "An attacker could read confidential data if they are able to control resource references."
+                },
+                {
+                    "scope": [
+                        "Integrity",
+                        "Confidentiality",
+                        "Availability"
+                    ],
+                    "impact": [
+                        "Modify Memory",
+                        "Execute Unauthorized Code or Commands"
+                    ],
+                    "note": "An attacker could use malicious input to modify data or possibly alter control flow in unexpected ways, including arbitrary command execution."
+                }
+            ],
+            "examples": [],
+            "mitigations": [],
+            "observed_cves": [
+                {
+                    "cve": "CVE-2020-3161",
+                    "description": "Improper input validation of HTTP requests in IP phone, as exploited in the wild per CISA KEV.",
+                    "link": "https://www.cve.org/CVERecord?id=CVE-2020-3161"
+                },
+                {
+                    "cve": "CVE-2008-0600",
+                    "description": "kernel does not validate an incoming pointer before dereferencing it",
+                    "link": "https://www.cve.org/CVERecord?id=CVE-2008-0600"
+                }
+            ]
+        }
+    ]
+}

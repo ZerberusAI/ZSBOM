@@ -100,9 +100,6 @@ def fetch_safety_db(config):
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
 
-# Path to Safety DB (TODO: Externalize to config.yaml)
-SAFETY_DB_URL = "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
-
 # Alternative CWE Source (TODO: Support MITRE CWE when available)
 NIST_CWE_URL = "https://services.nvd.nist.gov/rest/json/cwe/list/2.0"
 
@@ -180,6 +177,79 @@ def check_versions(dependencies, min_versions, enable_check):
             issues[pkg] = {"installed": installed_version, "required": min_version}
     return issues
 
+def parse_weakness(weakness, ns):
+    """Parse a single weakness from XML"""
+    weakness_data = {
+        "cwe_id": f"CWE-{weakness.get('ID', 'Unknown')}",
+        "name": weakness.get('Name', 'Unknown'),
+        "abstraction": weakness.get('Abstraction', ''),
+        "status": weakness.get('Status', ''),
+        "description": "",
+        "extended_description": "",
+        "likelihood": weakness.get('Likelihood', 'Unknown'),
+        "platforms": [],
+        "consequences": [],
+        "examples": [],
+        "observed_examples": [],
+        "mitigations": []
+    }
+    
+    # Get descriptions
+    desc = weakness.find('.//cwe:Description', ns)
+    if desc is not None and desc.text:
+        weakness_data["description"] = desc.text.strip()
+    
+    ext_desc = weakness.find('.//cwe:Extended_Description', ns)
+    if ext_desc is not None and ext_desc.text:
+        weakness_data["extended_description"] = ext_desc.text.strip()
+    
+    # Get platforms
+    platforms = weakness.find('.//cwe:Applicable_Platforms', ns)
+    if platforms is not None:
+        for platform in platforms.findall('.//cwe:Language', ns):
+            if platform.text or platform.get('Class'):
+                weakness_data["platforms"].append({
+                    "language": platform.get('Class', ''),
+                    "prevalence": platform.get('Prevalence', 'Unknown')
+                })
+    
+    # Get consequences
+    consequences = weakness.find('.//cwe:Common_Consequences', ns)
+    if consequences is not None:
+        for consequence in consequences.findall('.//cwe:Consequence', ns):
+            impact = [imp.text for imp in consequence.findall('.//cwe:Impact', ns) if imp.text]
+            scope = [s.text for s in consequence.findall('.//cwe:Scope', ns) if s.text]
+            note = consequence.find('.//cwe:Note', ns)
+            weakness_data["consequences"].append({
+                "scope": scope,
+                "impact": impact,
+                "note": note.text.strip() if note is not None and note.text else ""
+            })
+    
+    # Get examples
+    examples = weakness.find('.//cwe:Demonstrative_Examples', ns)
+    if examples is not None:
+        for example in examples.findall('.//cwe:Demonstrative_Example', ns):
+            code = example.find('.//cwe:Example_Code', ns)
+            weakness_data["examples"].append({
+                "language": code.get('Language', '') if code is not None else "",
+                "nature": code.get('Nature', '') if code is not None else "",
+                "intro": example.findtext('.//cwe:Intro_Text', '', ns),
+                "body": example.findtext('.//cwe:Body_Text', '', ns)
+            })
+    
+    # Get observed examples (CVEs)
+    observed = weakness.find('.//cwe:Observed_Examples', ns)
+    if observed is not None:
+        for example in observed.findall('.//cwe:Observed_Example', ns):
+            weakness_data["observed_examples"].append({
+                "cve": example.findtext('.//cwe:Reference', '', ns),
+                "description": example.findtext('.//cwe:Description', '', ns),
+                "link": example.findtext('.//cwe:Link', '', ns)
+            })
+    
+    return weakness_data
+
 # Fetch MITRE CWE Weaknesses (Fallback to NIST if MITRE is down)
 def fetch_cwe_data(config: Dict[str, Any]) -> Optional[Dict]:
     """Fetch and parse CWE data with streaming XML support"""
@@ -221,27 +291,11 @@ def fetch_cwe_data(config: Dict[str, Any]) -> Optional[Dict]:
         
         weaknesses = []
         for weakness in root.findall('.//cwe:Weakness', ns):
-            weakness_data = {
-                "cwe_id": f"CWE-{weakness.get('ID', 'Unknown')}",
-                "name": weakness.get('Name', 'Unknown'),
-                "description": "",
-                "likelihood": weakness.get('Likelihood', 'Unknown'),
-                "platforms": []
-            }
-            
-            # Get description with namespace
-            desc = weakness.find('.//cwe:Description', ns)
-            if desc is not None and desc.text:
-                weakness_data["description"] = desc.text.strip()
-            
-            # Get platforms with namespace
-            for platform in weakness.findall('.//cwe:Platform_Name', ns):
-                if platform.text:
-                    weakness_data["platforms"].append(platform.text.strip())
+            weakness_data = parse_weakness(weakness, ns)
             
             # Include Python-relevant and generic weaknesses
-            if ('Python' in weakness_data["platforms"] or 
-                not weakness_data["platforms"]):
+            if any(p.get('language') in ['Python', 'Not Language-Specific'] 
+                  for p in weakness_data["platforms"]):
                 weaknesses.append(weakness_data)
 
         data = {
@@ -299,21 +353,74 @@ def fetch_cwe_data(config: Dict[str, Any]) -> Optional[Dict]:
 
 # Check against CWE Weaknesses
 def check_cwe_weaknesses(dependencies, enable_check, config):
+    """Check dependencies against CWE weaknesses with specific focus on Python packages."""
     if not enable_check:
         return []
     
-    print("🔍 Checking against CWE weaknesses...")
+    logging.info("🔍 Checking against CWE weaknesses...")
     cwe_data = fetch_cwe_data(config)
     if not cwe_data:
         return []
 
     found_weaknesses = []
+    
+    # Get list of Python-specific CWEs from config
+    targeted_cwes = set(str(cwe).replace('CWE-', '') for cwe in config.get('mitre_weaknesses', []))
+    
     for weakness in cwe_data.get("cwe_list", {}).get("CWE_Items", []):
-        cwe_id = weakness.get("cwe_id", "Unknown")
-        description = weakness.get("description", "No description available")
-
-        # Add CWE matches to results
-        found_weaknesses.append({"CWE-ID": cwe_id, "description": description})
+        cwe_id = weakness.get("cwe_id", "Unknown").replace('CWE-', '')
+        
+        # Only process CWEs that are in our target list
+        if cwe_id not in targeted_cwes:
+            continue
+            
+        affected_packages = []
+        
+        # Check each package against the weakness
+        for package_name, version in dependencies.items():
+            is_vulnerable = False
+            
+            # Check if any example code matches the package
+            for example in weakness.get("examples", []):
+                if example.get("language") == "Python":
+                    code_sample = example.get("body", "")
+                    if package_name in code_sample.lower():
+                        is_vulnerable = True
+                        break
+            
+            # Check observed CVEs for the package
+            for cve_example in weakness.get("observed_examples", []):
+                if package_name in cve_example.get("description", "").lower():
+                    is_vulnerable = True
+                    break
+            
+            if is_vulnerable:
+                affected_packages.append(package_name)
+        
+        if affected_packages:
+            found_weaknesses.append({
+                "cwe_id": f"CWE-{cwe_id}",
+                "name": weakness.get("name"),
+                "description": weakness.get("description"),
+                "affected_packages": affected_packages,
+                "likelihood": weakness.get("likelihood"),
+                "consequences": weakness.get("consequences", []),
+                "examples": [
+                    ex for ex in weakness.get("examples", [])
+                    if ex.get("language") == "Python"
+                ],
+                "mitigations": weakness.get("mitigations", []),
+                "observed_cves": [
+                    cve for cve in weakness.get("observed_examples", [])
+                    if any(pkg in cve.get("description", "").lower() 
+                          for pkg in affected_packages)
+                ]
+            })
+    
+    if found_weaknesses:
+        logging.info(f"⚠️ Found {len(found_weaknesses)} relevant CWE weaknesses")
+    else:
+        logging.info("✅ No relevant CWE weaknesses found")
     
     return found_weaknesses
 
