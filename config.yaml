@@ -20,29 +20,23 @@ min_versions:
   numpy: "1.21.0"
 
 sources:
-  safety_db: "https://pyup.io/api/v1/safety/db/"
-  osv_vulnerabilities: "https://api.osv.dev/v1/query"
-  mitre_weaknesses: "https://cwe.mitre.org/data/published/cwe-python.json"  # New: MITRE Python CWE list
-
-mitre_weaknesses:
-  # List of Python-specific weaknesses from MITRE CWE database
-  - CWE-79  # Improper Neutralization of Input During Web Page Generation (XSS)
-  - CWE-89  # SQL Injection
-  - CWE-94  # Code Injection
-  - CWE-20  # Improper Input Validation
-  - CWE-502  # Deserialization of Untrusted Data
-  - CWE-829  # Inclusion of Functionality from Untrusted Control Sphere
-  - CWE-915  # Improperly Controlled Modification of Dynamically-Determined Object Attributes
+  cve:
+    safety_db:
+      enabled: false  # WIP
+      url: "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
+    osv_dev:
+      enabled: true
+      url: "https://api.osv.dev/v1/querybatch"
+  cwe:
+    mitre_weaknesses: 
+      enabled: true
+      url: "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip"  # New: MITRE Python CWE list
+    nvd_weaknesses: # Fallback to MITRE CWE
+      url: "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 output:
   report_file: "validation_report.json"
   sbom_file: "sbom.json"
-
-api_endpoints:
-  cwe:
-    primary: "https://cwe.mitre.org/data/xml/cwec_latest.xml"
-    fallback: "https://services.nvd.nist.gov/rest/json/cwe/list/2.0"
-  safety_db: "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
 
 caching:
   enabled: false
