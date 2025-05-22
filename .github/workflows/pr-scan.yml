@@ -1,0 +1,51 @@
+name: PR ZSBOM Scan
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  zsbom-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install project dependencies
+        run: |
+          pip install --upgrade pip
+
+          if [ -f requirements.txt ]; then
+            echo "Installing dependencies from requirements.txt"
+            pip install -r requirements.txt
+          elif [ -f pyproject.toml ] && [ -f poetry.lock ]; then
+            echo "Installing dependencies using Poetry"
+            pip install poetry
+            poetry install
+          else
+            echo "No known dependency file found."
+          fi
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install git+https://github.com/zerberus-co/zsbom.git
+
+      - name: Run SBOM scan
+        run: |
+          zsbom
+
+      - name: Upload ZSBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-json
+          path: sbom.json

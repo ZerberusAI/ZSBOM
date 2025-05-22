@@ -59,6 +59,7 @@ import io
 
 from .notification.gchat import GChatNotifier
 from .db.vulnerability import VulnerabilityCache
+from depclass.vulnerability_sources.osv_source import OSVSource
 
 
 logging.basicConfig(
@@ -255,19 +256,22 @@ def parse_weakness(weakness, ns):
 def fetch_cwe_data(config: Dict[str, Any]) -> Optional[Dict]:
     """Fetch and parse CWE data with streaming XML support"""
     cache = VulnerabilityCache(config['caching']['path'])
+    data = {}
+    source = "MITRE"
     
     if config['caching']['enabled']:
         cached_data = cache.get_cached_data('cwe', config['caching']['ttl_hours'])
+        source = cache.get_cached_data('cwe_source', config['caching']['ttl_hours'])
         if cached_data:
             logging.info("✅ Using cached CWE data")
-            return cached_data
+            return cached_data, source
 
     logging.info("🔍 Fetching fresh CWE data...")
     
     try:
         # Try downloading MITRE XML
         response = requests.get(
-            "https://cwe.mitre.org/data/xml/cwec_v4.9.xml.zip",  # Updated URL to explicitly request zip
+            "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip",  # Updated URL to explicitly request zip
             stream=True,
             timeout=30,
             headers={
@@ -288,29 +292,29 @@ def fetch_cwe_data(config: Dict[str, Any]) -> Optional[Dict]:
                 root = tree.getroot()
         
         # Extract namespace more robustly
-        ns = {'cwe': 'http://cwe.mitre.org/cwe-6'}
+        ns = {'cwe': 'http://cwe.mitre.org/cwe-7'}
         
-        weaknesses = []
         for weakness in root.findall('.//cwe:Weakness', ns):
-            weakness_data = parse_weakness(weakness, ns)
-            
-            # Include Python-relevant and generic weaknesses
-            if any(p.get('language') in ['Python', 'Not Language-Specific'] 
-                  for p in weakness_data["platforms"]):
-                weaknesses.append(weakness_data)
+            cwe_id = weakness.get('ID')
+            name = weakness.get('Name')
+            desc_node = weakness.find('cwe:Description', ns)
 
-        data = {
-            "cwe_list": {
-                "CWE_Items": weaknesses,
-                "source": "MITRE",
-                "timestamp": datetime.now().isoformat()
+            if not cwe_id or not name:
+                continue
+
+            description = desc_node.text.strip() if desc_node is not None else ""
+
+            data[int(cwe_id)] = {
+                "id": f"CWE-{cwe_id}",
+                "name": name,
+                "description": description
             }
-        }
-        
-        logging.info(f"✅ Successfully parsed {len(weaknesses)} CWE entries from MITRE")
+
+        logging.info(f"✅ Successfully parsed {len(data)} CWE entries from MITRE")
         
     except (requests.exceptions.RequestException, ET.ParseError, ValueError) as e:
         logging.warning(f"⚠️ MITRE fetch failed, falling back to NIST: {e}")
+        source = "NVD"
         
         try:
             # Updated NIST API endpoint
@@ -323,34 +327,35 @@ def fetch_cwe_data(config: Dict[str, Any]) -> Optional[Dict]:
                 }
             )
             response.raise_for_status()
-            data = response.json()
+            json_data = response.json()
+
+            for item in json_data.get("CWE", []):
+                cwe_id = item.get("cweId")
+                if cwe_id:
+                    data[int(cwe_id.split('-')[1])] = {
+                        "id": cwe_id,
+                        "name": item.get("name"),
+                        "description": item.get("description")
+                    }
+
             logging.info("✅ Successfully fetched NIST CWE data")
             
         except requests.exceptions.RequestException as e:
             logging.error(f"⚠️ Both MITRE and NIST CWE fetches failed: {e}")
             
             # Use minimal hardcoded dataset as last resort
-            data = {
-                "cwe_list": {
-                    "CWE_Items": [
-                        {
-                            "cwe_id": "CWE-79",
-                            "name": "Cross-site Scripting",
-                            "description": "Improper Neutralization of Input During Web Page Generation",
-                            "likelihood": "High",
-                            "platforms": ["Python"]
-                        }
-                    ],
-                    "source": "local_fallback",
-                    "timestamp": datetime.now().isoformat()
-                }
+            data["CWE-79"] = {
+                "id": "CWE-79",
+                "name": "Cross-site Scripting",
+                "description": "Improper Neutralization of Input During Web Page Generation",
             }
             logging.warning("⚠️ Using minimal fallback CWE data")
 
     if config['caching']['enabled'] and data:
         cache.cache_data('cwe', data)
+        cache.cache_data('cwe_source', source)
     
-    return data
+    return data, source
 
 # Check against CWE Weaknesses
 def check_cwe_weaknesses(dependencies, enable_check, config):
@@ -358,85 +363,27 @@ def check_cwe_weaknesses(dependencies, enable_check, config):
     if not enable_check:
         return []
     
-    logging.info("🔍 Checking against CWE weaknesses...")
-    cwe_data = fetch_cwe_data(config)
+    cwe_data, source = fetch_cwe_data(config)
     if not cwe_data:
         return []
-
-    found_weaknesses = []
     
-    # Get list of Python-specific CWEs from config
-    targeted_cwes = set(str(cwe).replace('CWE-', '') for cwe in config.get('mitre_weaknesses', []))
+    logging.info(f"✅ Parsed {len(cwe_data)} CWE entries from {source}")
     
-    for weakness in cwe_data.get("cwe_list", {}).get("CWE_Items", []):
-        cwe_id = weakness.get("cwe_id", "Unknown").replace('CWE-', '')
-        
-        # Only process CWEs that are in our target list
-        if cwe_id not in targeted_cwes:
-            continue
-            
-        affected_packages = []
-        
-        # Check each package against the weakness
-        for package_name, version in dependencies.items():
-            is_vulnerable = False
-            
-            # Check if any example code matches the package
-            for example in weakness.get("examples", []):
-                if example.get("language") == "Python":
-                    code_sample = example.get("body", "")
-                    if package_name in code_sample.lower():
-                        is_vulnerable = True
-                        break
-            
-            # Check observed CVEs for the package
-            for cve_example in weakness.get("observed_examples", []):
-                if package_name in cve_example.get("description", "").lower():
-                    is_vulnerable = True
-                    break
-            
-            if is_vulnerable:
-                affected_packages.append(package_name)
-        
-        if affected_packages:
-            found_weaknesses.append({
-                "cwe_id": f"CWE-{cwe_id}",
-                "name": weakness.get("name"),
-                "description": weakness.get("description"),
-                "affected_packages": affected_packages,
-                "likelihood": weakness.get("likelihood"),
-                "consequences": weakness.get("consequences", []),
-                "examples": [
-                    ex for ex in weakness.get("examples", [])
-                    if ex.get("language") == "Python"
-                ],
-                "mitigations": weakness.get("mitigations", []),
-                "observed_cves": [
-                    cve for cve in weakness.get("observed_examples", [])
-                    if any(pkg in cve.get("description", "").lower() 
-                          for pkg in affected_packages)
-                ]
-            })
-    
-    if found_weaknesses:
-        logging.info(f"⚠️ Found {len(found_weaknesses)} relevant CWE weaknesses")
-    else:
-        logging.info("✅ No relevant CWE weaknesses found")
-    
-    return found_weaknesses
+    return cwe_data
 
 # Main validation function
-def validate():
-    config = load_config()
+def validate(config):
     dependencies = get_installed_packages()
+    cache = None
 
     if config['caching']['enabled']:
         os.makedirs(os.path.dirname(config['caching']['path']), exist_ok=True)
         cache = VulnerabilityCache(config['caching']['path'])
     
+    cve_issues = OSVSource(dependencies, cache, 1)
     
     results = {
-        "cve_issues": check_cves(dependencies, config["validation_rules"]["enable_cve_check"], config),
+        "cve_issues": cve_issues.fetch_vulnerabilities(),
         "abandoned_packages": check_abandoned(dependencies, config["abandoned_packages"], config["validation_rules"]["enable_abandoned_check"]),
         "typosquatting_issues": check_typosquatting(dependencies, config["typosquatting_blacklist"], config["validation_rules"]["enable_typosquatting_check"]),
         "version_issues": check_versions(dependencies, config["min_versions"], config["validation_rules"]["enable_version_check"]),
@@ -458,5 +405,3 @@ def validate():
         notifier = GChatNotifier(config)
         notifier.send(results)
 
-if __name__ == "__main__":
-    validate()
