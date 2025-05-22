@@ -115,7 +115,7 @@ def parse_cwes(cwe_list):
                 pass
     return cwe_ints
 
-def read_json_file(file_path: str) -> dict | None:
+def read_json_file(file_path: str):
     """
     Reads a JSON file and returns the data as a Python dictionary.
     """
