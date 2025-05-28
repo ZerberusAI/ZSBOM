@@ -46,10 +46,16 @@ This script validates Python dependencies against:
 import os
 import yaml
 import json
-import requests
 import importlib.metadata  # Replaces deprecated pkg_resources
-from safety.safety import get_vulnerabilities
 import logging
+
+from .notification.gchat import GChatNotifier
+from .db.vulnerability import VulnerabilityCache
+from depclass.vulnerability_sources.osv_source import OSVSource
+from depclass.vulnerability_sources.safety_db import SafetyDBSource
+from depclass.weakness_sources.mitre import MitreSource
+from depclass.weakness_sources.nvd import NvdSource
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,27 +66,9 @@ logging.basicConfig(
     ]
 )
 
-def fetch_safety_db():
-    logging.info("Fetching Safety DB...")
-    try:
-        response = requests.get(SAFETY_DB_URL, timeout=10)
-        response.raise_for_status()
-        logging.info("✅ Safety DB fetched successfully.")
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"⚠️ Failed to fetch Safety DB: {e}")
-        return None
-
-
 # Resolve path to config.yaml in the root directory
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
-
-# Path to Safety DB (TODO: Externalize to config.yaml)
-SAFETY_DB_URL = "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
-
-# Alternative CWE Source (TODO: Support MITRE CWE when available)
-NIST_CWE_URL = "https://services.nvd.nist.gov/rest/json/cwe/list/2.0"
 
 # Load validation configuration
 def load_config(config_file=CONFIG_PATH):
@@ -93,53 +81,6 @@ def load_config(config_file=CONFIG_PATH):
 # Get installed dependencies
 def get_installed_packages():
     return {pkg.metadata["Name"].lower(): pkg.version for pkg in importlib.metadata.distributions()}
-
-# Fetch and parse Safety DB manually
-def fetch_safety_db():
-    try:
-        print("🔍 Fetching Safety DB...")
-        response = requests.get(SAFETY_DB_URL, timeout=10)
-        response.raise_for_status()
-        return json.loads(response.text)  # Parse JSON directly
-    except requests.exceptions.RequestException as e:
-        print(f"⚠️ Failed to fetch Safety DB: {e}")
-        return None
-
-# Check for CVEs using Safety DB
-def check_cves(dependencies, enable_check):
-    if not enable_check:
-        return []
-    
-    print("🔍 Checking for CVEs...")
-    db = fetch_safety_db()
-    if not db:
-        return []
-
-    vulns = []
-    for package, version in dependencies.items():
-        package_data = db.get(package, [])
-
-        # Ensure package_data is a list
-        if not isinstance(package_data, list):
-            print(f"⚠️ Unexpected format for package {package}: {package_data}")
-            continue
-
-        for vuln in package_data:
-            if isinstance(vuln, dict):
-                specs = vuln.get("specs", [])
-                
-                # Check if the installed version falls within the vulnerable range
-                for spec in specs:
-                    if version in spec:  # This is a rough check, might need more logic
-                        vulns.append({
-                            "package": package,
-                            "cve": vuln.get("cve", "Unknown"),
-                            "severity": vuln.get("severity", "Unknown"),
-                            "description": vuln.get("advisory", "No details available")
-                        })
-                        break  # Stop after first match
-
-    return vulns
 
 # Check for abandoned packages
 def check_abandoned(dependencies, abandoned_list, enable_check):
@@ -167,57 +108,72 @@ def check_versions(dependencies, min_versions, enable_check):
             issues[pkg] = {"installed": installed_version, "required": min_version}
     return issues
 
-# Fetch MITRE CWE Weaknesses (Fallback to NIST if MITRE is down)
-def fetch_cwe_data():
-    try:
-        print("🔍 Fetching CWE data...")
-        response = requests.get(NIST_CWE_URL, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"⚠️ CWE fetch failed: {e}")
-        return None
+def check_cve(config, dependencies, cache):
+    result = []
+    cve_sources = {
+        "osv_dev": OSVSource,
+        "safety_db": SafetyDBSource
+    }
 
-# Check against CWE Weaknesses
-def check_cwe_weaknesses(dependencies, enable_check):
-    if not enable_check:
-        return []
-    
-    print("🔍 Checking against CWE weaknesses...")
-    cwe_data = fetch_cwe_data()
-    if not cwe_data:
-        return []
+    # Idea is to get CVE data from all the enabled sources and consolidate it in the result
+    for cve_source, value in config['sources']['cve'].items():
+        if value.get('enabled', False):
+            cve = cve_sources[cve_source](config, dependencies, cache)
+            result = cve.fetch_vulnerabilities()
 
-    found_weaknesses = []
-    for weakness in cwe_data.get("cwe_list", {}).get("CWE_Items", []):
-        cwe_id = weakness.get("cwe_id", "Unknown")
-        description = weakness.get("description", "No description available")
+    # TODO
+    # Append result and consolidation
 
-        # Add CWE matches to results
-        found_weaknesses.append({"CWE-ID": cwe_id, "description": description})
-    
-    return found_weaknesses
+    return result
+
+def check_cwe(config, cache):
+    result = []
+    cwe_sources = {
+        "mitre_weaknesses": MitreSource,
+        "nvd_weaknesses": NvdSource
+    }
+
+    for cwe_source, value in config['sources']['cwe'].items():
+        if value.get('enabled', False):
+            try:
+                cwe = cwe_sources[cwe_source](config, cache)
+                # TODO
+                # Append result and consolidation
+                result = cwe.fetch_weakness()
+            except Exception as e:
+                logging.warning(f"⚠️ MITRE fetch failed, falling back to NIST: {e}")
+                cwe = cwe_sources['nvd_weaknesses'](config, cache)
+                result = cwe.fetch_weakness()
+
+    return result
 
 # Main validation function
-def validate():
-    config = load_config()
+def validate(config):
     dependencies = get_installed_packages()
-    
+    cache = None
+
+    if config['caching']['enabled']:
+        os.makedirs(os.path.dirname(config['caching']['path']), exist_ok=True)
+        cache = VulnerabilityCache(config['caching']['path'])
+
     results = {
-        "cve_issues": check_cves(dependencies, config["validation_rules"]["enable_cve_check"]),
+        "cve_issues": check_cve(config, dependencies, cache),
         "abandoned_packages": check_abandoned(dependencies, config["abandoned_packages"], config["validation_rules"]["enable_abandoned_check"]),
         "typosquatting_issues": check_typosquatting(dependencies, config["typosquatting_blacklist"], config["validation_rules"]["enable_typosquatting_check"]),
         "version_issues": check_versions(dependencies, config["min_versions"], config["validation_rules"]["enable_version_check"]),
-        # "cwe_weaknesses": check_cwe_weaknesses(config["validation_rules"]["enable_mitre_check"]),
-        "cwe_weaknesses": check_cwe_weaknesses(dependencies, config["validation_rules"]["enable_mitre_check"]),
-
+        "cwe_weaknesses": check_cwe(config, cache),
     }
+
+    if config['caching']['enabled']:
+        scan_id = cache.store_scan_result(results)
+        logging.info(f"Scan results stored with ID: {scan_id}")
 
     # Save results to JSON file
     with open(config["output"]["report_file"], "w") as f:
         json.dump(results, f, indent=4)
-
+    
     print(f"✅ Validation completed. Results saved in `{config['output']['report_file']}`.")
+    if config['notifications']['gchat']['enabled']:
+        notifier = GChatNotifier(config)
+        notifier.send(results)
 
-if __name__ == "__main__":
-    validate()

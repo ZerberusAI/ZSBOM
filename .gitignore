@@ -1,0 +1,10 @@
+*/__pycache__/*
+venv
+validation_report.json
+dependencies.json
+sbom.json
+.cache
+zsbom.log
+*.pyc
+*.egg-info
+build/*
