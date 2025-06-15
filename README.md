@@ -68,6 +68,7 @@ You can **integrate ZSBOM** into your existing Python project by:
 2. **SBOM files are generated** and stored in the project root directory `sbom.json`.
 3. **SBOM metadata is embedded** into `pyproject.toml` to enable automated tracking.
 4. **CI/CD pipelines validate dependencies** and security risks before deployment.
+5. **Packages are scored across five metadata dimensions** (version drift, known CVEs, CWE mappings, abandonment, typosquatting) to classify their risk level. Scoring weights are configurable via the `risk_model` section of `config.yaml`.
 
 ### 6. CI/CD Integration Example (GitHub Actions)
 This section provides an example of how to integrate ZSBOM into a GitHub Actions workflow to automatically scan your project on pull requests to the `main` branch.

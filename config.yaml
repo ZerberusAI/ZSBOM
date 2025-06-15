@@ -37,6 +37,18 @@ sources:
 output:
   report_file: "validation_report.json"
   sbom_file: "sbom.json"
+  risk_file: "risk_report.json"
+# Risk scoring weights
+risk_model:
+  weights:
+    version_mismatch: 1
+    cve: 3
+    cwe: 1
+    abandonment: 2
+    typosquat: 2
+  high_threshold: 6
+  medium_threshold: 3
+
 
 caching:
   enabled: false
