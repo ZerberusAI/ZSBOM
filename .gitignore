@@ -174,3 +174,5 @@ Thumbs.db
 .cache/
 sbom.json
 validation_report.json
+dependencies.json
+zsbom.log

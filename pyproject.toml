@@ -1,5 +1,26 @@
-[tool.poetry]
+[project]
 name = "zsbom"
 version = "0.1.0"
 description = "Zerberus SBOM Automation Framework"
-authors = ["ZerberusAI"]
+authors = [{ name = "Zerberus", email = "opensource@zerberus.co.uk" }]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "cyclonedx-python-lib>=9.1.0",
+    "requests==2.32.3",
+    "safety==3.3.1",
+    "importlib-metadata; python_version < '3.8'",
+    "PyYAML==6.0.2"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+zsbom = "depclass.cli:main"
