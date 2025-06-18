@@ -177,3 +177,5 @@ def validate(config):
         notifier = GChatNotifier(config)
         notifier.send(results)
 
+    return results
+
