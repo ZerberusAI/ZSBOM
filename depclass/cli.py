@@ -3,7 +3,7 @@ import yaml
 from depclass.validate import validate, get_installed_packages
 from depclass.sbom import read_json_file, generate_sbom
 from depclass.extract import extract_dependencies
-from depclass.risk import parse_declared_versions, score_packages
+from depclass.risk import parse_declared_versions, score_packages_detailed
 from depclass.risk_model import load_model
 
 def load_config(path):
@@ -38,7 +38,7 @@ def main():
 
     declared = parse_declared_versions(extract_dependencies())
     model = load_model(config.get("risk_model"))
-    scores = score_packages(results, declared, get_installed_packages(), model)
+    scores = score_packages_detailed(results, declared, get_installed_packages(), model)
 
     with open(config["output"].get("risk_file", "risk_report.json"), "w") as fp:
         yaml.safe_dump(scores, fp)

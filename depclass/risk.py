@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .risk_model import RiskModel
+from .risk_calculator import WeightedRiskCalculator
 
 
 def parse_declared_versions(dependencies: Dict[str, Any]) -> Dict[str, str]:
@@ -87,64 +88,85 @@ def compute_package_score(
     repo_path: Optional[str] = None,
     model: Optional[RiskModel] = None,
 ) -> Dict[str, Any]:
-    """Compute a risk score for a package using the provided model."""
+    """Compute a risk score for a package using the ZSBOM Risk Scoring Framework v1.0."""
     if model is None:
         model = RiskModel()
 
-    score = 0
-    details: Dict[str, Any] = {}
-
-    if declared_version and installed_version != declared_version:
-        score += model.weight_version_mismatch
-        details["version_mismatch"] = {
-            "declared": declared_version,
-            "installed": installed_version,
-        }
-
-    if cve_list:
-        score += model.weight_cve
-        details["cves"] = [c.get("vuln_id") for c in cve_list]
-        if any(c.get("cwes") for c in cve_list):
-            score += model.weight_cwe
-
-    ab_score, days = _abandonment_score(repo_path, model)
-    if ab_score:
-        score += ab_score
-        details["abandoned"] = True
-        if days is not None:
-            details["last_activity_days"] = days
-
-    if package in typos:
-        score += model.weight_typosquat
-        details["typosquatting"] = True
-
-    if score >= model.high_threshold:
-        risk = "high"
-    elif score >= model.medium_threshold:
-        risk = "medium"
-    else:
-        risk = "low"
-
-    return {
-        "package": package,
-        "installed_version": installed_version,
-        "declared_version": declared_version,
-        "score": score,
-        "risk": risk,
-        "details": details,
+    # Initialize the weighted risk calculator
+    calculator = WeightedRiskCalculator(model)
+    
+    # Calculate comprehensive score using the new framework
+    result = calculator.calculate_score(
+        package=package,
+        installed_version=installed_version,
+        declared_version=declared_version,
+        cve_list=cve_list,
+        typosquat_blacklist=typos,
+        repo_path=repo_path,
+    )
+    
+    # Convert to legacy format for backward compatibility
+    legacy_result = {
+        "package": result["package"],
+        "installed_version": result["installed_version"],
+        "declared_version": result["declared_version"],
+        "score": result["final_score"],
+        "risk": result["risk_level"],
+        "details": _convert_details_to_legacy_format(result),
     }
+    
+    return legacy_result
 
 
-def score_packages(
+def _convert_details_to_legacy_format(framework_result: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert new framework result to legacy details format for backward compatibility."""
+    details = {}
+    
+    # Version mismatch
+    declared_details = framework_result["dimension_details"]["declared_vs_installed"]
+    if not declared_details["exact_match"] and declared_details["has_declared_version"]:
+        details["version_mismatch"] = {
+            "declared": declared_details["declared_version"],
+            "installed": declared_details["installed_version"],
+        }
+    
+    # CVEs
+    cve_details = framework_result["dimension_details"]["known_cves"]
+    if cve_details["cve_count"] > 0:
+        details["cves"] = [cve["vuln_id"] for cve in cve_details["cves"]]
+    
+    # CWEs (if any CVEs have CWEs)
+    cwe_details = framework_result["dimension_details"]["cwe_coverage"]
+    if cwe_details["cwe_count"] > 0:
+        details["cwes"] = [cwe["cwe_id"] for cwe in cwe_details["cwes"]]
+    
+    # Abandonment
+    abandonment_details = framework_result["dimension_details"]["package_abandonment"]
+    if abandonment_details["score"] < 5.0:  # Arbitrary threshold for "abandoned"
+        details["abandoned"] = True
+        last_commit_info = abandonment_details["components"]["last_commit"]
+        if last_commit_info.get("days_since_last_commit"):
+            details["last_activity_days"] = last_commit_info["days_since_last_commit"]
+    
+    # Typosquatting
+    typosquat_details = framework_result["dimension_details"]["typosquat_heuristics"]
+    if typosquat_details["score"] < 5.0:  # Arbitrary threshold for "typosquatting"
+        details["typosquatting"] = True
+    
+    return details
+
+
+def score_packages_detailed(
     validation_results: Dict[str, Any],
     declared_versions: Dict[str, str],
     installed_packages: Dict[str, str],
     model: Optional[RiskModel] = None,
 ) -> List[Dict[str, Any]]:
-    """Return risk scores for all installed packages."""
+    """Return detailed risk scores for all installed packages using the new framework format."""
     if model is None:
         model = RiskModel()
 
+    calculator = WeightedRiskCalculator(model)
     scores = []
     cve_data = validation_results.get("cve_issues", [])
     typos = validation_results.get("typosquatting_issues", [])
@@ -153,10 +175,16 @@ def score_packages(
         dec_ver = declared_versions.get(pkg)
         cves = _package_cve_issues(pkg, cve_data)
         repo_path = _get_distribution_path(pkg)
-        scores.append(
-            compute_package_score(
-                pkg, inst_ver, dec_ver, cves, typos, repo_path, model
-            )
+        
+        detailed_score = calculator.calculate_score(
+            package=pkg,
+            installed_version=inst_ver,
+            declared_version=dec_ver,
+            cve_list=cves,
+            typosquat_blacklist=typos,
+            repo_path=repo_path,
         )
+        
+        scores.append(detailed_score)
 
     return scores
