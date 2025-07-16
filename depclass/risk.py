@@ -13,7 +13,11 @@ from .risk_calculator import WeightedRiskCalculator
 
 
 def parse_declared_versions(dependencies: Dict[str, Any]) -> Dict[str, str]:
-    """Extract a mapping of package name to declared version."""
+    """Extract a mapping of package name to declared version (legacy format).
+    
+    This function maintains backward compatibility with the old format
+    where dependencies was a nested structure with lists for requirements.txt.
+    """
     versions: Dict[str, str] = {}
 
     reqs = dependencies.get("requirements.txt", [])
@@ -31,6 +35,55 @@ def parse_declared_versions(dependencies: Dict[str, Any]) -> Dict[str, str]:
                 versions[name.lower()] = value["version"]
 
     return versions
+
+
+def parse_package_specifications(dependencies: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    """Parse package specifications from enhanced dependency extraction.
+    
+    Takes the new format from enhanced extract.py and creates a structure
+    suitable for the new DeclaredVsInstalledScorer.
+    
+    Args:
+        dependencies: Dictionary mapping file names to package specifications
+        
+    Returns:
+        Dictionary mapping file names to package specifications
+    """
+    package_specs = {}
+    
+    for file_name, packages in dependencies.items():
+        if file_name == "runtime":
+            continue  # Skip runtime packages for specification parsing
+        
+        if packages:
+            package_specs[file_name] = packages
+    
+    return package_specs
+
+
+def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str, str]]) -> Optional[str]:
+    """Get the primary declared version for a package based on file priority.
+    
+    Args:
+        package: Package name
+        package_specs: Package specifications from multiple files
+        
+    Returns:
+        Primary declared version string or None if not found
+    """
+    file_priority = [
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.py",
+        "setup.cfg",
+        "Pipfile"
+    ]
+    
+    for file_name in file_priority:
+        if file_name in package_specs and package in package_specs[file_name]:
+            return package_specs[file_name][package]
+    
+    return None
 
 
 def _package_cve_issues(package: str, cve_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -124,7 +177,7 @@ def _convert_details_to_legacy_format(framework_result: Dict[str, Any]) -> Dict[
     
     # Version mismatch
     declared_details = framework_result["dimension_details"]["declared_vs_installed"]
-    if not declared_details["exact_match"] and declared_details["has_declared_version"]:
+    if not declared_details.get("exact_match") and declared_details.get("has_declared_version"):
         details["version_mismatch"] = {
             "declared": declared_details["declared_version"],
             "installed": declared_details["installed_version"],
@@ -156,13 +209,31 @@ def _convert_details_to_legacy_format(framework_result: Dict[str, Any]) -> Dict[
     return details
 
 
-def score_packages_detailed(
+
+
+def score_packages(
     validation_results: Dict[str, Any],
-    declared_versions: Dict[str, str],
+    dependencies: Dict[str, Dict[str, str]],
     installed_packages: Dict[str, str],
     model: Optional[RiskModel] = None,
 ) -> List[Dict[str, Any]]:
-    """Return detailed risk scores for all installed packages using the new framework format."""
+    """Return detailed risk scores using enhanced dependency file parsing.
+    
+    This function provides comprehensive risk scoring with the full 3-factor 
+    declared vs installed analysis:
+    1. Version Match Precision Analysis (4 points)
+    2. Specification Completeness Analysis (3 points)
+    3. Cross-File Consistency Analysis (3 points)
+    
+    Args:
+        validation_results: CVE and vulnerability data
+        dependencies: Enhanced dependency data from extract.py
+        installed_packages: Currently installed packages
+        model: Risk model configuration
+        
+    Returns:
+        List of detailed risk scores with enhanced declared vs installed analysis
+    """
     if model is None:
         model = RiskModel()
 
@@ -170,19 +241,29 @@ def score_packages_detailed(
     scores = []
     cve_data = validation_results.get("cve_issues", [])
     typos = validation_results.get("typosquatting_issues", [])
+    
+    # Parse package specifications from enhanced format
+    package_specs = parse_package_specifications(dependencies)
 
     for pkg, inst_ver in installed_packages.items():
-        dec_ver = declared_versions.get(pkg)
+        # Get primary declared version for backward compatibility
+        primary_declared_ver = get_primary_declared_version(pkg, package_specs)
+        
+        # Get CVEs and repo path
         cves = _package_cve_issues(pkg, cve_data)
         repo_path = _get_distribution_path(pkg)
         
+        # Calculate score with enhanced package specification data
         detailed_score = calculator.calculate_score(
             package=pkg,
             installed_version=inst_ver,
-            declared_version=dec_ver,
+            declared_version=primary_declared_ver,
             cve_list=cves,
             typosquat_blacklist=typos,
             repo_path=repo_path,
+            # Pass enhanced data for new declared vs installed analysis
+            dependency_files=dependencies,
+            package_specs=package_specs,
         )
         
         scores.append(detailed_score)

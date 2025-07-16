@@ -18,40 +18,173 @@ from depclass.dimension_scorers import (
 
 
 class TestDeclaredVsInstalledScorer:
-    """Test the DeclaredVsInstalledScorer dimension."""
+    """Test the enhanced DeclaredVsInstalledScorer dimension with 3-factor scoring."""
     
-    def test_perfect_match(self):
+    def test_perfect_match_exact_version(self):
+        """Test Factor 1: Exact version match (4 points)."""
         scorer = DeclaredVsInstalledScorer()
         score = scorer.score("test_package", "1.0.0", "1.0.0")
-        assert score == 10.0
+        assert score == 10.0  # 4 + 3 + 3 (perfect match + fully pinned + consistent)
     
     def test_no_declared_version(self):
+        """Test Factor 1: No declared version (0 points)."""
         scorer = DeclaredVsInstalledScorer()
         score = scorer.score("test_package", "1.0.0", None)
-        assert score == 5.0
+        assert score == 3.0  # 0 + 0 + 3 (no spec + no constraint + consistent)
     
-    def test_major_version_difference(self):
+    def test_range_satisfied(self):
+        """Test Factor 1: Range constraint satisfied (3 points)."""
         scorer = DeclaredVsInstalledScorer()
-        score = scorer.score("test_package", "2.0.0", "1.0.0")
-        assert score == 3.0
+        score = scorer.score("test_package", "1.5.0", ">=1.0.0,<2.0.0")
+        assert score == 8.0  # 3 + 2 + 3 (range satisfied + bounded range + consistent)
     
-    def test_minor_version_difference(self):
+    def test_range_violated(self):
+        """Test Factor 1: Range constraint violated (1 point)."""
         scorer = DeclaredVsInstalledScorer()
-        score = scorer.score("test_package", "1.1.0", "1.0.0")
-        assert score == 8.0
+        score = scorer.score("test_package", "2.0.0", ">=1.0.0,<2.0.0")
+        assert score == 6.0  # 1 + 2 + 3 (range violated + bounded range + consistent)
     
-    def test_patch_version_difference(self):
+    def test_specification_completeness_fully_pinned(self):
+        """Test Factor 2: Fully pinned specification (3 points)."""
         scorer = DeclaredVsInstalledScorer()
-        score = scorer.score("test_package", "1.0.1", "1.0.0")
-        assert score == 9.0
+        score = scorer.score("test_package", "1.0.0", "==1.0.0")
+        assert score == 10.0  # 4 + 3 + 3 (exact match + fully pinned + consistent)
     
-    def test_get_details(self):
+    def test_specification_completeness_bounded_range(self):
+        """Test Factor 2: Bounded range specification (2 points)."""
         scorer = DeclaredVsInstalledScorer()
-        details = scorer.get_details("test_package", "1.1.0", "1.0.0")
+        score = scorer.score("test_package", "1.5.0", ">=1.0.0,<2.0.0")
+        assert score == 8.0  # 3 + 2 + 3 (range satisfied + bounded range + consistent)
+    
+    def test_specification_completeness_minimum_only(self):
+        """Test Factor 2: Minimum only specification (1 point)."""
+        scorer = DeclaredVsInstalledScorer()
+        score = scorer.score("test_package", "1.5.0", ">=1.0.0")
+        assert score == 7.0  # 3 + 1 + 3 (range satisfied + minimum only + consistent)
+    
+    def test_specification_completeness_no_constraint(self):
+        """Test Factor 2: No constraint (0 points)."""
+        scorer = DeclaredVsInstalledScorer()
+        score = scorer.score("test_package", "1.0.0", None)
+        assert score == 3.0  # 0 + 0 + 3 (no spec + no constraint + consistent)
+    
+    def test_cross_file_consistency_with_specs(self):
+        """Test Factor 3: Cross-file consistency analysis."""
+        scorer = DeclaredVsInstalledScorer()
+        
+        # Test with consistent specs across files
+        package_specs = {
+            "pyproject.toml": {"test_package": ">=1.0.0,<2.0.0"},
+            "requirements.txt": {"test_package": ">=1.0.0,<2.0.0"}
+        }
+        
+        score = scorer.score(
+            "test_package", "1.5.0", ">=1.0.0,<2.0.0",
+            package_specs=package_specs
+        )
+        assert score == 8.0  # 3 + 2 + 3 (range satisfied + bounded range + consistent)
+    
+    def test_cross_file_consistency_with_conflicts(self):
+        """Test Factor 3: Cross-file consistency with conflicts."""
+        scorer = DeclaredVsInstalledScorer()
+        
+        # Test with incompatible specs across files
+        package_specs = {
+            "pyproject.toml": {"test_package": ">=1.0.0,<2.0.0"},
+            "requirements.txt": {"test_package": ">=3.0.0,<4.0.0"}
+        }
+        
+        score = scorer.score(
+            "test_package", "1.5.0", ">=1.0.0,<2.0.0",
+            package_specs=package_specs
+        )
+        assert score == 5.0  # 3 + 2 + 0 (range satisfied + bounded range + major conflicts)
+    
+    def test_cross_file_consistency_minor_conflicts(self):
+        """Test Factor 3: Cross-file consistency with minor conflicts."""
+        scorer = DeclaredVsInstalledScorer()
+        
+        # Test with compatible but different specs
+        package_specs = {
+            "pyproject.toml": {"test_package": ">=1.0.0,<3.0.0"},
+            "requirements.txt": {"test_package": ">=1.5.0,<2.0.0"}
+        }
+        
+        score = scorer.score(
+            "test_package", "1.8.0", ">=1.0.0,<3.0.0",
+            package_specs=package_specs
+        )
+        assert score == 6.0  # 3 + 2 + 1 (range satisfied + bounded range + minor conflicts)
+    
+    def test_poetry_constraints(self):
+        """Test Poetry-style constraints (^, ~)."""
+        scorer = DeclaredVsInstalledScorer()
+        
+        # Test caret constraint
+        score = scorer.score("test_package", "1.5.0", "^1.0.0")
+        assert score == 8.0  # 3 + 2 + 3 (range satisfied + bounded range + consistent)
+        
+        # Test tilde constraint
+        score = scorer.score("test_package", "1.2.5", "~1.2.0")
+        assert score == 8.0  # 3 + 2 + 3 (range satisfied + bounded range + consistent)
+    
+    def test_get_details_comprehensive(self):
+        """Test detailed scoring information."""
+        scorer = DeclaredVsInstalledScorer()
+        
+        package_specs = {
+            "pyproject.toml": {"test_package": ">=1.0.0,<2.0.0"},
+            "requirements.txt": {"test_package": ">=1.5.0,<2.0.0"}
+        }
+        
+        details = scorer.get_details(
+            "test_package", "1.8.0", ">=1.0.0,<2.0.0",
+            package_specs=package_specs
+        )
+        
         assert details["dimension"] == "declared_vs_installed"
-        assert details["exact_match"] == False
-        assert details["has_declared_version"] == True
-        assert "version_diff" in details
+        assert "factors" in details
+        assert details["factors"]["version_match_precision"] == 3.0
+        assert details["factors"]["specification_completeness"] == 2.0
+        assert details["factors"]["cross_file_consistency"] == 1.0
+        assert details["package_details"]["match_status"] == "range_satisfied"
+        assert details["details"]["specification_quality"] == "bounded_range"
+        assert details["details"]["consistency_status"] == "minor_conflicts"
+        assert "files_found" in details["details"]
+    
+    def test_invalid_version_handling(self):
+        """Test handling of invalid version strings."""
+        scorer = DeclaredVsInstalledScorer()
+        
+        # Invalid installed version - should still score specification and consistency
+        score = scorer.score("test_package", "invalid.version", "1.0.0")
+        assert score == 6.0  # 0 + 3 + 3 (invalid precision + fully pinned + consistent)
+        
+        # Invalid declared version - should score only consistency
+        score = scorer.score("test_package", "1.0.0", "invalid.spec")
+        assert score == 3.0  # 0 + 0 + 3 (unspecified + no constraint + consistent)
+    
+    def test_edge_cases(self):
+        """Test edge cases and boundary conditions."""
+        scorer = DeclaredVsInstalledScorer()
+        
+        # Empty string declared version
+        score = scorer.score("test_package", "1.0.0", "")
+        assert score == 3.0  # 0 + 0 + 3 (no spec + no constraint + consistent)
+        
+        # Very specific constraint that's violated
+        score = scorer.score("test_package", "1.0.1", "==1.0.0")
+        assert score == 7.0  # 1 + 3 + 3 (range violated + fully pinned + consistent)
+        
+        # Single file specification
+        package_specs = {
+            "pyproject.toml": {"test_package": ">=1.0.0"}
+        }
+        score = scorer.score(
+            "test_package", "1.5.0", ">=1.0.0",
+            package_specs=package_specs
+        )
+        assert score == 7.0  # 3 + 1 + 3 (range satisfied + minimum only + consistent)
 
 
 class TestKnownCVEsScorer:

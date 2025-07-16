@@ -5,6 +5,30 @@ validation_rules:
   enable_version_check: true
   enable_mitre_check: true  # New: Check for MITRE Python weaknesses
 
+# Version consistency configuration for declared vs installed analysis
+version_consistency:
+  # File priority for dependency resolution (higher priority = preferred source)
+  file_priority:
+    - "pyproject.toml"
+    - "requirements.txt"
+    - "setup.py"
+    - "setup.cfg"
+    - "Pipfile"
+  
+  # Files to ignore during analysis
+  ignore_files:
+    - "requirements-dev.txt"
+    - "test-requirements.txt"
+    - "docs-requirements.txt"
+  
+  # Cross-file consistency checking settings
+  cross_file_analysis:
+    enabled: true
+    # Treat different but compatible specs as minor conflicts
+    compatible_as_minor_conflict: true
+    # Log detailed conflict information
+    detailed_conflict_logging: true
+
 abandoned_packages:
   - "oldlib"
   - "unmaintained-pkg"

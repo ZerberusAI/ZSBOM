@@ -10,7 +10,9 @@ dependencies = [
     "requests==2.32.4",
     "safety==3.3.1",
     "importlib-metadata; python_version < '3.8'",
-    "PyYAML==6.0.2"
+    "PyYAML==6.0.2",
+    "packaging>=21.0",
+    "tomli>=1.2.0; python_version < '3.11'"
 ]
 
 [project.optional-dependencies]

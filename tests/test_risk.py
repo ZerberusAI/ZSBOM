@@ -30,12 +30,13 @@ def test_compute_package_score_low():
     res = risk.compute_package_score(
         package=pkg,
         installed_version='1.0',
-        declared_version='1.0',  # Exact match
+        declared_version='==1.0',  # Exact match
         cve_list=[],  # No CVEs
         typos=[],  # Not a typosquat
         repo_path=None,
         model=RiskModel()
     )
+
     assert res['risk'] == 'low'
     assert res['score'] >= 80  # Low risk is 80+ in new framework
 

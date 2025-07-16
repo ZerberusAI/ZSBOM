@@ -314,6 +314,9 @@ class PackageAbandonmentScorer(DimensionScorer):
                     
                     if release_dates:
                         last_release_date = max(release_dates)
+                        # Ensure both datetime objects are timezone-aware
+                        if last_release_date.tzinfo is None:
+                            last_release_date = last_release_date.replace(tzinfo=timezone.utc)
                         days_since_last_release = (datetime.now(timezone.utc) - last_release_date).days
                         
                         return {
