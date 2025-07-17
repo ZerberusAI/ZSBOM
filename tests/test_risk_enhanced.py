@@ -95,7 +95,7 @@ class TestEnhancedRiskScoring:
         # Test data
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         dependencies = {
@@ -143,7 +143,7 @@ class TestEnhancedRiskScoring:
         
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         # Create conflicting specifications
@@ -204,7 +204,7 @@ class TestEnhancedRiskScoring:
                 "severity": "HIGH",
                 "cvss_score": 8.5
             }],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         dependencies = {
@@ -234,7 +234,7 @@ class TestEnhancedRiskScoring:
         """Test enhanced scoring when no declared versions are found."""
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         # Only runtime packages, no declared versions
@@ -273,7 +273,7 @@ class TestEnhancedRiskScoring:
         """Test enhanced scoring with custom risk model configuration."""
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         dependencies = {

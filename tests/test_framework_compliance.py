@@ -86,7 +86,7 @@ class TestFrameworkCompliance:
                 'installed_version': '1.0.0',
                 'declared_version': '1.0.0',
                 'cve_list': [],
-                'typosquat_blacklist': [],
+                'typosquatting_whitelist': [],
                 'repo_path': None
             },
             # Risky package
@@ -95,7 +95,7 @@ class TestFrameworkCompliance:
                 'installed_version': '1.0.0',
                 'declared_version': '2.0.0',
                 'cve_list': [{'package_name': 'risky_package', 'vuln_id': 'CVE-2023-1234', 'severity': 'CRITICAL'}],
-                'typosquat_blacklist': ['risky_package'],
+                'typosquatting_whitelist': ['risky_package'],
                 'repo_path': None
             }
         ]
@@ -120,7 +120,7 @@ class TestFrameworkCompliance:
             installed_version='1.0.0',
             declared_version='1.0.0',
             cve_list=[],
-            typosquat_blacklist=[],
+            typosquatting_whitelist=[],
             repo_path=None
         )
         
@@ -150,7 +150,7 @@ class TestFrameworkCompliance:
             installed_version='1.2.3',
             declared_version='1.2.3',
             cve_list=[],
-            typosquat_blacklist=[],
+            typosquatting_whitelist=[],
             repo_path=None
         )
         
@@ -192,7 +192,7 @@ class TestFrameworkCompliance:
             installed_version='1.0.0',
             declared_version=None,  # No declared version
             cve_list=None,  # No CVE list
-            typosquat_blacklist=None,  # No typosquat blacklist
+            typosquatting_whitelist=None,  # No typosquat blacklist
             repo_path=None  # No repo path
         )
         
@@ -207,7 +207,7 @@ class TestFrameworkCompliance:
             installed_version='invalid_version',
             declared_version='also_invalid',
             cve_list=[],
-            typosquat_blacklist=[],
+            typosquatting_whitelist=[],
             repo_path=None
         )
         

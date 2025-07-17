@@ -33,10 +33,29 @@ abandoned_packages:
   - "oldlib"
   - "unmaintained-pkg"
 
-typosquatting_blacklist:
-  - "reqquests"
-  - "numpyy"
-  - "dj4ngo"
+# Typosquatting detection configuration
+typosquat_detection:
+  enabled: true
+  top_packages_url: "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json"
+  download_thresholds:
+    high: 1000
+    medium: 500
+    low: 100
+  similarity_threshold: 2  # Levenshtein distance threshold for creation date factor
+  new_package_days: 90     # Days threshold for considering a package "new"
+  cache_ttl:
+    top_packages_hours: 48  # 2 days cache for top packages
+    pypi_metadata_hours: 1  # 1 hour cache for PyPI metadata
+
+# Typosquatting whitelist - packages known to be safe
+typosquatting_whitelist:
+  - "requests"
+  - "numpy"
+  - "flask"
+  - "django"
+  - "pip"
+  - "wheel"
+  - "setuptools"
 
 min_versions:
   flask: "2.0.0"

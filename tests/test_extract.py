@@ -258,7 +258,7 @@ numpy>=1.21.0
             req_file = Path(temp_dir) / "requirements.txt"
             req_file.write_text("""
 # This is a comment
-requests==2.28.0   # Inline comment
+   requests==2.28.0   # Inline comment
    
 numpy>=1.21.0
 

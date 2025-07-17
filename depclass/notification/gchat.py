@@ -24,7 +24,7 @@ class GChatNotifier:
                                 "textParagraph": {
                                     "text": f"<b>CVE Issues:</b> {len(results['cve_issues'])}<br>"
                                            f"<b>Abandoned Packages:</b> {len(results['abandoned_packages'])}<br>"
-                                           f"<b>Typosquatting Issues:</b> {len(results['typosquatting_issues'])}<br>"
+                                           f"<b>Whitelist Applied:</b> {len(results.get('typosquatting_whitelist', []))}<br>"
                                            f"<b>Version Issues:</b> {len(results['version_issues'])}"
                                 }
                             }

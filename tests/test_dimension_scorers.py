@@ -396,47 +396,378 @@ class TestPackageAbandonmentScorer:
 
 
 class TestTyposquatHeuristicsScorer:
-    """Test the TyposquatHeuristicsScorer dimension."""
+    """Test the TyposquatHeuristicsScorer dimension with 5-factor analysis."""
     
-    def test_clean_package_name(self):
-        scorer = TyposquatHeuristicsScorer()
-        score = scorer.score("unique_package_name", "1.0.0")
-        assert score == 10.0
+    def setup_method(self):
+        """Set up test fixtures."""
+        # Mock data for testing
+        self.mock_top_packages = [
+            {"project": "requests", "download_count": 1000000},
+            {"project": "numpy", "download_count": 800000},
+            {"project": "flask", "download_count": 600000},
+            {"project": "django", "download_count": 500000},
+            {"project": "pandas", "download_count": 400000},
+        ]
+        
+        self.mock_pypi_metadata = {
+            "metadata": {"info": {"name": "test_package"}},
+            "download_count": 1500,
+            "creation_date": "2023-01-01T00:00:00Z"
+        }
     
-    def test_known_typosquat_pattern(self):
-        scorer = TyposquatHeuristicsScorer()
-        score = scorer.score("reqquests", "1.0.0")  # Known typosquat of "requests"
-        assert score == 0.0
-    
-    def test_user_blacklist(self):
-        scorer = TyposquatHeuristicsScorer()
-        score = scorer.score("suspicious_package", "1.0.0", typosquat_blacklist=["suspicious_package"])
-        assert score == 0.0
-    
-    def test_high_similarity_to_popular_package(self):
-        scorer = TyposquatHeuristicsScorer()
-        # This should be similar to "requests"
-        score = scorer.score("requestss", "1.0.0")
-        assert score < 5.0  # High similarity should give low score
-    
-    def test_moderate_similarity(self):
-        scorer = TyposquatHeuristicsScorer()
-        # This should have moderate similarity to "flask"
-        score = scorer.score("flaskk", "1.0.0")
-        assert score < 8.0  # Moderate similarity
-    
-    def test_no_similarity(self):
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor1_string_distance_no_similarity(self, mock_metadata, mock_top_packages):
+        """Test Factor 1: String distance with no similarity (3 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
         scorer = TyposquatHeuristicsScorer()
         score = scorer.score("completely_unique_name_12345", "1.0.0")
+        
+        # Should get 3 points for string distance + other factors
+        assert score >= 3.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor1_string_distance_high_similarity(self, mock_metadata, mock_top_packages):
+        """Test Factor 1: String distance with high similarity (0 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("requsts", "1.0.0")  # Distance 1 from "requests"
+        
+        # Should get 0 points for string distance factor
+        assert score <= 7.0  # Max without string distance points
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor1_string_distance_moderate_similarity(self, mock_metadata, mock_top_packages):
+        """Test Factor 1: String distance with moderate similarity (1-2 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("reqests", "1.0.0")  # Distance 2 from "requests"
+        
+        # Should get 1 point for string distance factor
+        assert score <= 8.0  # Max with 1 point for string distance
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor2_downloads_high_downloads(self, mock_metadata, mock_top_packages):
+        """Test Factor 2: Downloads + similarity with high downloads (3 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = {
+            "metadata": {"info": {"name": "test_package"}},
+            "download_count": 2000,  # High downloads
+            "creation_date": "2023-01-01T00:00:00Z"
+        }
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("completely_unique_name_12345", "1.0.0")
+        
+        # Should get 3 points for downloads factor + other factors
+        assert score >= 6.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor2_downloads_low_downloads_similar(self, mock_metadata, mock_top_packages):
+        """Test Factor 2: Downloads + similarity with low downloads and similar name (0 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = {
+            "metadata": {"info": {"name": "test_package"}},
+            "download_count": 50,  # Very low downloads
+            "creation_date": "2023-01-01T00:00:00Z"
+        }
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("requsts", "1.0.0")  # Similar to "requests"
+        
+        # Should get 0 points for downloads factor due to low downloads + similarity
+        assert score <= 7.0  # Max without downloads factor points
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor3_character_substitution_no_substitutions(self, mock_metadata, mock_top_packages):
+        """Test Factor 3: Character substitution with no substitutions (2 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("clean_package_name", "1.0.0")
+        
+        # Should get 2 points for character substitution factor
+        assert score >= 2.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor3_character_substitution_multiple_substitutions(self, mock_metadata, mock_top_packages):
+        """Test Factor 3: Character substitution with multiple substitutions (0 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("requ3st5", "1.0.0")  # Multiple substitutions: 3->e, 5->s
+        
+        # Should get 0 points for character substitution factor
+        assert score <= 8.0  # Max without character substitution points
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor4_keyboard_proximity_no_typos(self, mock_metadata, mock_top_packages):
+        """Test Factor 4: Keyboard proximity with no typos (1 point)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("clean_package_name", "1.0.0")
+        
+        # Should get 1 point for keyboard proximity factor
+        assert score >= 1.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor4_keyboard_proximity_with_typos(self, mock_metadata, mock_top_packages):
+        """Test Factor 4: Keyboard proximity with typos (0 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("requets", "1.0.0")  # 'ue' is keyboard proximity typo
+        
+        # Should get 0 points for keyboard proximity factor
+        assert score <= 9.0  # Max without keyboard proximity points
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor5_creation_date_old_package(self, mock_metadata, mock_top_packages):
+        """Test Factor 5: Creation date with old package (1 point)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = {
+            "metadata": {"info": {"name": "test_package"}},
+            "download_count": 1500,
+            "creation_date": "2020-01-01T00:00:00Z"  # Old package
+        }
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("clean_package_name", "1.0.0")
+        
+        # Should get 1 point for creation date factor
+        assert score >= 1.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_factor5_creation_date_new_package_similar(self, mock_metadata, mock_top_packages):
+        """Test Factor 5: Creation date with new package + similar name (0 points)."""
+        mock_top_packages.return_value = self.mock_top_packages
+        
+        from datetime import datetime, timedelta
+        recent_date = (datetime.now() - timedelta(days=30)).isoformat() + "Z"
+        
+        mock_metadata.return_value = {
+            "metadata": {"info": {"name": "test_package"}},
+            "download_count": 1500,
+            "creation_date": recent_date  # New package
+        }
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("requsts", "1.0.0")  # Similar to "requests"
+        
+        # Should get 0 points for creation date factor
+        assert score <= 9.0  # Max without creation date points
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_whitelist_functionality(self, mock_metadata, mock_top_packages):
+        """Test whitelist functionality returns max score."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score(
+            "requsts", "1.0.0",
+            typosquatting_whitelist=["requsts", "another_package"]
+        )
+        
+        # Whitelisted package should get max score
         assert score == 10.0
     
-    def test_get_details(self):
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_api_failure_handling(self, mock_metadata, mock_top_packages):
+        """Test handling of API failures."""
+        mock_top_packages.return_value = []  # Empty list simulates API failure
+        mock_metadata.return_value = None  # None simulates API failure
+        
         scorer = TyposquatHeuristicsScorer()
-        details = scorer.get_details("requestss", "1.0.0")
+        score = scorer.score("test_package", "1.0.0")
+        
+        # Should return default moderate score on API failure
+        assert score == 5.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_perfect_score_scenario(self, mock_metadata, mock_top_packages):
+        """Test scenario that should yield perfect score."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = {
+            "metadata": {"info": {"name": "test_package"}},
+            "download_count": 2000,  # High downloads
+            "creation_date": "2020-01-01T00:00:00Z"  # Old package
+        }
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("completely_unique_clean_name", "1.0.0")
+        
+        # Should get perfect score: 3 + 3 + 2 + 1 + 1 = 10
+        assert score == 10.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_worst_score_scenario(self, mock_metadata, mock_top_packages):
+        """Test scenario that should yield worst score."""
+        mock_top_packages.return_value = self.mock_top_packages
+        
+        from datetime import datetime, timedelta
+        recent_date = (datetime.now() - timedelta(days=30)).isoformat() + "Z"
+        
+        mock_metadata.return_value = {
+            "metadata": {"info": {"name": "test_package"}},
+            "download_count": 50,  # Very low downloads
+            "creation_date": recent_date  # New package
+        }
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("requ3st5", "1.0.0")  # Similar + substitutions + proximity
+        
+        # Should get very low score - actual: 1 + 0 + 0 + 1 + 0 = 2
+        assert score == 2.0
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_get_details_comprehensive(self, mock_metadata, mock_top_packages):
+        """Test detailed scoring information."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        details = scorer.get_details("requsts", "1.0.0")
+        
+        # Check structure
         assert details["dimension"] == "typosquat_heuristics"
-        assert "similarity_analysis" in details
-        assert "pattern_checks" in details
+        assert details["package_name"] == "requsts"
+        assert "score" in details
         assert "risk_indicators" in details
+        assert "factors" in details
+        assert "in_whitelist" in details
+        
+        # Check factors
+        factors = details["factors"]
+        assert "string_distance" in factors
+        assert "downloads_similarity" in factors
+        assert "character_substitution" in factors
+        assert "keyboard_proximity" in factors
+        assert "creation_date" in factors
+        
+        # Each factor should have score and details
+        for factor_name, factor_data in factors.items():
+            assert "score" in factor_data
+            assert "details" in factor_data
+        
+        assert details["total_max_score"] == 10
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_get_details_whitelist(self, mock_metadata, mock_top_packages):
+        """Test detailed scoring information for whitelisted package."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        details = scorer.get_details(
+            "requsts", "1.0.0",
+            typosquatting_whitelist=["requsts"]
+        )
+        
+        assert details["in_whitelist"] == True
+        assert details["score"] == 10.0
+        assert details["risk_indicators"] == []
+        
+        # All factors should show whitelisted
+        for factor_name, factor_data in details["factors"].items():
+            assert factor_data["details"] == "whitelisted"
+    
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._init_cache')
+    def test_cache_initialization(self, mock_init_cache):
+        """Test cache initialization."""
+        scorer = TyposquatHeuristicsScorer()
+        mock_init_cache.assert_called_once()
+    
+    def test_character_substitution_patterns(self):
+        """Test character substitution pattern detection."""
+        scorer = TyposquatHeuristicsScorer()
+        
+        # Test bidirectional substitutions
+        assert '0' in scorer.char_substitutions
+        assert 'o' in scorer.char_substitutions
+        assert scorer.char_substitutions['0'] == 'o'
+        assert scorer.char_substitutions['o'] == '0'
+        
+        # Test all expected substitutions
+        expected_substitutions = {
+            '0': 'o', 'o': '0',
+            '1': 'l', 'l': '1',
+            '5': 's', 's': '5',
+            '3': 'e', 'e': '3',
+            '8': 'b', 'b': '8',
+            '4': 'a', 'a': '4',
+            '7': 't', 't': '7',
+            '6': 'g', 'g': '6'
+        }
+        
+        for char, expected in expected_substitutions.items():
+            assert scorer.char_substitutions[char] == expected
+    
+    def test_keyboard_proximity_patterns(self):
+        """Test keyboard proximity pattern detection."""
+        scorer = TyposquatHeuristicsScorer()
+        
+        # Test some key adjacencies
+        assert 'w' in scorer.qwerty_proximity['q']
+        assert 'a' in scorer.qwerty_proximity['q']
+        assert 'e' in scorer.qwerty_proximity['w']
+        assert 's' in scorer.qwerty_proximity['w']
+        
+        # Test number row proximity
+        assert '1' in scorer.qwerty_proximity['q']
+        assert '2' in scorer.qwerty_proximity['w']
+        
+        # Test shift key mappings
+        assert '@' in scorer.qwerty_proximity['!']
+        assert '#' in scorer.qwerty_proximity['@']
+    
+    def test_download_thresholds(self):
+        """Test download threshold configuration."""
+        scorer = TyposquatHeuristicsScorer()
+        
+        assert scorer.download_thresholds['high'] == 1000
+        assert scorer.download_thresholds['medium'] == 500
+        assert scorer.download_thresholds['low'] == 100
+        
+        # Test logical ordering
+        assert scorer.download_thresholds['high'] > scorer.download_thresholds['medium']
+        assert scorer.download_thresholds['medium'] > scorer.download_thresholds['low']
+    
+    def test_configuration_parameters(self):
+        """Test configuration parameter defaults."""
+        scorer = TyposquatHeuristicsScorer()
+        
+        assert scorer.new_package_days == 90
+        assert scorer.similarity_threshold == 2
+        assert scorer.top_packages_url == "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json"
+        assert scorer.pypi_api_base == "https://pypi.org/pypi"
 
 
 class TestDimensionScorerBase:

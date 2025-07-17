@@ -137,7 +137,7 @@ def compute_package_score(
     installed_version: str,
     declared_version: str | None,
     cve_list: List[Dict[str, Any]],
-    typos: List[str],
+    typosquatting_whitelist: List[str],
     repo_path: Optional[str] = None,
     model: Optional[RiskModel] = None,
 ) -> Dict[str, Any]:
@@ -154,7 +154,7 @@ def compute_package_score(
         installed_version=installed_version,
         declared_version=declared_version,
         cve_list=cve_list,
-        typosquat_blacklist=typos,
+        typosquatting_whitelist=typosquatting_whitelist,
         repo_path=repo_path,
     )
     
@@ -240,7 +240,7 @@ def score_packages(
     calculator = WeightedRiskCalculator(model)
     scores = []
     cve_data = validation_results.get("cve_issues", [])
-    typos = validation_results.get("typosquatting_issues", [])
+    typosquatting_whitelist = validation_results.get("typosquatting_whitelist", [])
     
     # Parse package specifications from enhanced format
     package_specs = parse_package_specifications(dependencies)
@@ -259,7 +259,7 @@ def score_packages(
             installed_version=inst_ver,
             declared_version=primary_declared_ver,
             cve_list=cves,
-            typosquat_blacklist=typos,
+            typosquatting_whitelist=typosquatting_whitelist,
             repo_path=repo_path,
             # Pass enhanced data for new declared vs installed analysis
             dependency_files=dependencies,

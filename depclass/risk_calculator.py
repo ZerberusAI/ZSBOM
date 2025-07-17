@@ -42,7 +42,7 @@ class WeightedRiskCalculator:
         installed_version: str,
         declared_version: Optional[str] = None,
         cve_list: Optional[List[Dict[str, Any]]] = None,
-        typosquat_blacklist: Optional[List[str]] = None,
+        typosquatting_whitelist: Optional[List[str]] = None,
         repo_path: Optional[str] = None,
         **kwargs: Any
     ) -> Dict[str, Any]:
@@ -53,7 +53,7 @@ class WeightedRiskCalculator:
             installed_version: Currently installed version
             declared_version: Version declared in requirements
             cve_list: List of CVE dictionaries
-            typosquat_blacklist: List of known typosquatting packages
+            typosquatting_whitelist: List of known safe packages
             repo_path: Path to local git repository
             **kwargs: Additional arguments
             
@@ -98,10 +98,10 @@ class WeightedRiskCalculator:
         
         # Typosquat Heuristics dimension
         dimension_scores["typosquat_heuristics"] = self.scorers["typosquat_heuristics"].score(
-            package, installed_version, declared_version, typosquat_blacklist=typosquat_blacklist, **kwargs
+            package, installed_version, declared_version, typosquatting_whitelist=typosquatting_whitelist, **kwargs
         )
         dimension_details["typosquat_heuristics"] = self.scorers["typosquat_heuristics"].get_details(
-            package, installed_version, declared_version, typosquat_blacklist=typosquat_blacklist, **kwargs
+            package, installed_version, declared_version, typosquatting_whitelist=typosquatting_whitelist, **kwargs
         )
         
         # Apply weights to get weighted contributions

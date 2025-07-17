@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 import yaml
+import re
 
 from .risk_model import RiskModel
 
@@ -43,6 +44,206 @@ class ConfigValidator:
         # Validate thresholds
         thresholds_errors = self.validate_thresholds(risk_model_config.get("risk_thresholds", {}))
         errors.extend(thresholds_errors)
+        
+        # Validate typosquat_detection section
+        if "typosquat_detection" in config:
+            typosquat_errors = self.validate_typosquat_detection(config["typosquat_detection"])
+            errors.extend(typosquat_errors)
+        
+        # Validate typosquatting_whitelist
+        if "typosquatting_whitelist" in config:
+            whitelist_errors = self.validate_typosquatting_whitelist(config["typosquatting_whitelist"])
+            errors.extend(whitelist_errors)
+        
+        return errors
+    
+    def validate_typosquat_detection(self, typosquat_config: Dict[str, Any]) -> List[str]:
+        """Validate typosquat_detection configuration.
+        
+        Args:
+            typosquat_config: Typosquat detection configuration dictionary
+            
+        Returns:
+            List of validation error messages
+        """
+        errors = []
+        
+        # Check enabled flag
+        if "enabled" not in typosquat_config:
+            errors.append("Missing 'enabled' flag in typosquat_detection configuration")
+        elif not isinstance(typosquat_config["enabled"], bool):
+            errors.append("'enabled' flag in typosquat_detection must be boolean")
+        
+        # Check top_packages_url
+        if "top_packages_url" not in typosquat_config:
+            errors.append("Missing 'top_packages_url' in typosquat_detection configuration")
+        else:
+            url = typosquat_config["top_packages_url"]
+            if not isinstance(url, str):
+                errors.append("'top_packages_url' must be a string")
+            elif not self._is_valid_url(url):
+                errors.append(f"'top_packages_url' is not a valid URL: {url}")
+        
+        # Check download_thresholds
+        if "download_thresholds" not in typosquat_config:
+            errors.append("Missing 'download_thresholds' in typosquat_detection configuration")
+        else:
+            thresholds = typosquat_config["download_thresholds"]
+            threshold_errors = self._validate_download_thresholds(thresholds)
+            errors.extend(threshold_errors)
+        
+        # Check similarity_threshold
+        if "similarity_threshold" not in typosquat_config:
+            errors.append("Missing 'similarity_threshold' in typosquat_detection configuration")
+        else:
+            threshold = typosquat_config["similarity_threshold"]
+            if not isinstance(threshold, (int, float)):
+                errors.append("'similarity_threshold' must be numeric")
+            elif threshold < 0 or threshold > 10:
+                errors.append(f"'similarity_threshold' must be between 0 and 10, got {threshold}")
+        
+        # Check new_package_days
+        if "new_package_days" not in typosquat_config:
+            errors.append("Missing 'new_package_days' in typosquat_detection configuration")
+        else:
+            days = typosquat_config["new_package_days"]
+            if not isinstance(days, int):
+                errors.append("'new_package_days' must be an integer")
+            elif days <= 0:
+                errors.append(f"'new_package_days' must be positive, got {days}")
+        
+        # Check cache_ttl
+        if "cache_ttl" not in typosquat_config:
+            errors.append("Missing 'cache_ttl' in typosquat_detection configuration")
+        else:
+            cache_ttl = typosquat_config["cache_ttl"]
+            ttl_errors = self._validate_cache_ttl(cache_ttl)
+            errors.extend(ttl_errors)
+        
+        return errors
+    
+    def validate_typosquatting_whitelist(self, whitelist: Any) -> List[str]:
+        """Validate typosquatting_whitelist configuration.
+        
+        Args:
+            whitelist: Whitelist configuration
+            
+        Returns:
+            List of validation error messages
+        """
+        errors = []
+        
+        if not isinstance(whitelist, list):
+            errors.append("'typosquatting_whitelist' must be a list")
+        else:
+            for i, package in enumerate(whitelist):
+                if not isinstance(package, str):
+                    errors.append(f"Package at index {i} in typosquatting_whitelist must be a string")
+                elif not package.strip():
+                    errors.append(f"Package at index {i} in typosquatting_whitelist cannot be empty")
+                elif not self._is_valid_package_name(package):
+                    errors.append(f"Invalid package name at index {i} in typosquatting_whitelist: {package}")
+        
+        return errors
+    
+    def _is_valid_url(self, url: str) -> bool:
+        """Check if a URL is valid.
+        
+        Args:
+            url: URL to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        url_pattern = re.compile(
+            r'^https?://'  # http:// or https://
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+            r'localhost|'  # localhost...
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+            r'(?::\d+)?'  # optional port
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        return url_pattern.match(url) is not None
+    
+    def _is_valid_package_name(self, name: str) -> bool:
+        """Check if a package name is valid.
+        
+        Args:
+            name: Package name to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        # Basic package name validation (alphanumeric, hyphens, underscores, dots)
+        package_pattern = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
+        return package_pattern.match(name) is not None
+    
+    def _validate_download_thresholds(self, thresholds: Any) -> List[str]:
+        """Validate download thresholds configuration.
+        
+        Args:
+            thresholds: Download thresholds configuration
+            
+        Returns:
+            List of validation error messages
+        """
+        errors = []
+        
+        if not isinstance(thresholds, dict):
+            errors.append("'download_thresholds' must be a dictionary")
+            return errors
+        
+        required_keys = {"high", "medium", "low"}
+        missing_keys = required_keys - set(thresholds.keys())
+        if missing_keys:
+            errors.append(f"Missing keys in download_thresholds: {', '.join(missing_keys)}")
+        
+        # Check that all values are positive integers
+        for key, value in thresholds.items():
+            if not isinstance(value, int):
+                errors.append(f"Download threshold '{key}' must be an integer, got {type(value)}")
+            elif value < 0:
+                errors.append(f"Download threshold '{key}' must be non-negative, got {value}")
+        
+        # Check logical ordering (high > medium > low)
+        if all(k in thresholds for k in required_keys):
+            high = thresholds["high"]
+            medium = thresholds["medium"]
+            low = thresholds["low"]
+            
+            if all(isinstance(v, int) for v in [high, medium, low]):
+                if high <= medium:
+                    errors.append(f"High threshold ({high}) must be greater than medium threshold ({medium})")
+                if medium <= low:
+                    errors.append(f"Medium threshold ({medium}) must be greater than low threshold ({low})")
+        
+        return errors
+    
+    def _validate_cache_ttl(self, cache_ttl: Any) -> List[str]:
+        """Validate cache TTL configuration.
+        
+        Args:
+            cache_ttl: Cache TTL configuration
+            
+        Returns:
+            List of validation error messages
+        """
+        errors = []
+        
+        if not isinstance(cache_ttl, dict):
+            errors.append("'cache_ttl' must be a dictionary")
+            return errors
+        
+        required_keys = {"top_packages_hours", "pypi_metadata_hours"}
+        missing_keys = required_keys - set(cache_ttl.keys())
+        if missing_keys:
+            errors.append(f"Missing keys in cache_ttl: {', '.join(missing_keys)}")
+        
+        # Check that all values are positive integers
+        for key, value in cache_ttl.items():
+            if not isinstance(value, int):
+                errors.append(f"Cache TTL '{key}' must be an integer, got {type(value)}")
+            elif value <= 0:
+                errors.append(f"Cache TTL '{key}' must be positive, got {value}")
         
         return errors
     

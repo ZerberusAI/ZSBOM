@@ -34,6 +34,7 @@ This script validates Python dependencies against:
    - Future improvements:
      - Support fetching **SAFE lists** (known good packages) from an external source.
      - Allow **user-defined blacklists** via `config.yaml` or API.
+     - Note: Typosquatting detection is now handled by the risk scoring system.
 
  **Logging & Alerting**
    - Add **verbose logging** for better debugging.
@@ -89,12 +90,6 @@ def check_abandoned(dependencies, abandoned_list, enable_check):
     print("🔍 Checking for abandoned packages...")
     return [pkg for pkg in dependencies if pkg in abandoned_list]
 
-# Check for typosquatting risks
-def check_typosquatting(dependencies, blacklist, enable_check):
-    if not enable_check:
-        return []
-    print("🔍 Checking for typosquatting risks...")
-    return [pkg for pkg in dependencies if pkg in blacklist]
 
 # Check if installed versions meet minimum requirements
 def check_versions(dependencies, min_versions, enable_check):
@@ -159,7 +154,6 @@ def validate(config):
     results = {
         "cve_issues": check_cve(config, dependencies, cache),
         "abandoned_packages": check_abandoned(dependencies, config["abandoned_packages"], config["validation_rules"]["enable_abandoned_check"]),
-        "typosquatting_issues": check_typosquatting(dependencies, config["typosquatting_blacklist"], config["validation_rules"]["enable_typosquatting_check"]),
         "version_issues": check_versions(dependencies, config["min_versions"], config["validation_rules"]["enable_version_check"]),
         "cwe_weaknesses": check_cwe(config, cache),
     }
