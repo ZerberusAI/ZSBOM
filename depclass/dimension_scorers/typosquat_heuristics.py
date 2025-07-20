@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import Levenshtein
 from .base import DimensionScorer
+from ..services import get_pypi_service
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         """
         self.cache_db_path = cache_db_path
         self.top_packages_url = "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json"
-        self.pypi_api_base = "https://pypi.org/pypi"
+        self.pypi_service = get_pypi_service()
         
         # Character substitution patterns (bidirectional)
         self.char_substitutions = {
@@ -168,16 +169,6 @@ class TyposquatHeuristicsScorer(DimensionScorer):
                 )
             ''')
             
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pypi_metadata (
-                    package_name TEXT PRIMARY KEY,
-                    metadata TEXT,
-                    download_count INTEGER,
-                    creation_date TEXT,
-                    cached_at TIMESTAMP,
-                    ttl_hours INTEGER DEFAULT 1
-                )
-            ''')
             
             conn.commit()
             conn.close()
@@ -273,7 +264,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             return []
     
     def _get_pypi_metadata(self, package_name: str) -> Optional[Dict[str, Any]]:
-        """Get package metadata from PyPI API with caching.
+        """Get package metadata using shared PyPI service.
         
         Args:
             package_name: Name of the package
@@ -281,98 +272,11 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         Returns:
             Package metadata dictionary or None if failed
         """
-        try:
-            # Check cache first
-            conn = sqlite3.connect(self.cache_db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT metadata, download_count, creation_date, cached_at, ttl_hours
-                FROM pypi_metadata
-                WHERE package_name = ?
-            ''', (package_name,))
-            
-            cached_data = cursor.fetchone()
-            
-            if cached_data and self._is_cache_valid(cached_data[3], cached_data[4]):
-                conn.close()
-                return {
-                    'metadata': json.loads(cached_data[0]),
-                    'download_count': cached_data[1],
-                    'creation_date': cached_data[2]
-                }
-            
-            # Cache miss or expired, fetch from API
-            url = f"{self.pypi_api_base}/{package_name}/json"
-            response = self._make_request_with_retry(url)
-            
-            if not response:
-                # Network unavailable, use stale cached data if available
-                if cached_data:
-                    logger.warning(f"Network unavailable, using stale cached metadata for package '{package_name}'")
-                    conn.close()
-                    return {
-                        'metadata': json.loads(cached_data[0]),
-                        'download_count': cached_data[1],
-                        'creation_date': cached_data[2]
-                    }
-                else:
-                    conn.close()
-                    return None
-            
-            data = response.json()
-            
-            # Extract download count and creation date
-            download_count = 0
-            creation_date = None
-            
-            # Get download count (if available)
-            if 'info' in data and 'download_count' in data['info']:
-                download_count = data['info']['download_count'] or 0
-            
-            # Get creation date from first release
-            if 'releases' in data and data['releases']:
-                releases = data['releases']
-                # Find the earliest release
-                earliest_date = None
-                for version, release_info in releases.items():
-                    if release_info:  # Skip empty releases
-                        for release in release_info:
-                            if 'upload_time' in release:
-                                release_date = release['upload_time']
-                                if earliest_date is None or release_date < earliest_date:
-                                    earliest_date = release_date
-                
-                if earliest_date:
-                    creation_date = earliest_date
-            
-            # Cache the result
-            cursor.execute('''
-                INSERT OR REPLACE INTO pypi_metadata 
-                (package_name, metadata, download_count, creation_date, cached_at, ttl_hours)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                package_name,
-                json.dumps(data),
-                download_count,
-                creation_date,
-                datetime.now().isoformat(),
-                1  # 1 hour TTL
-            ))
-            
-            conn.commit()
-            conn.close()
-            
-            return {
-                'metadata': data,
-                'download_count': download_count,
-                'creation_date': creation_date
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch PyPI metadata for package '{package_name}' from {self.pypi_api_base}: {e}. "
-                        f"This may affect download count and creation date scoring factors. Using cached data if available.")
-            return None
+        result = self.pypi_service.get_package_metadata(package_name, ttl_hours=1)
+        if result and result.get('pypi_data_available'):
+            return result
+        return None
+
     
     def _make_request_with_retry(self, url: str, max_retries: int = 3) -> Optional[requests.Response]:
         """Make HTTP request with exponential backoff retry.

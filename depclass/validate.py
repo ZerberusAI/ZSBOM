@@ -143,11 +143,25 @@ def check_cwe(config, cache):
     return result
 
 # Main validation function
-def validate(config):
+def validate(config, cache=None, transitive_analysis=None):
+    # Get packages to validate - prefer resolved packages from transitive analysis
     dependencies = get_installed_packages()
-    cache = None
-
-    if config['caching']['enabled']:
+    
+    # If transitive analysis is available and transitive validation is enabled, use resolved packages
+    include_transitive = config.get('transitive_analysis', {}).get('include_in_validation', True)
+    if transitive_analysis and include_transitive:
+        resolved_packages = transitive_analysis.get("resolution_details", {})
+        if resolved_packages:
+            # Merge resolved packages with installed packages, giving preference to resolved versions
+            dependencies = {**dependencies, **resolved_packages}
+            logging.info(f"🔍 Validating {len(dependencies)} packages (including transitive dependencies)")
+        else:
+            logging.warning("⚠️ No resolved packages found in transitive analysis, using installed packages only")
+    else:
+        logging.info(f"🔍 Validating {len(dependencies)} packages (direct dependencies only)")
+    
+    # Use provided cache or create new one if caching is enabled
+    if cache is None and config['caching']['enabled']:
         os.makedirs(os.path.dirname(config['caching']['path']), exist_ok=True)
         cache = VulnerabilityCache(config['caching']['path'])
 
@@ -157,6 +171,14 @@ def validate(config):
         "version_issues": check_versions(dependencies, config["min_versions"], config["validation_rules"]["enable_version_check"]),
         "cwe_weaknesses": check_cwe(config, cache),
     }
+    
+    # Add package classification if transitive analysis is available
+    if transitive_analysis and include_transitive:
+        classification = transitive_analysis.get("classification", {})
+        # Tag each CVE issue with dependency type
+        for cve in results["cve_issues"]:
+            package_name = cve.get("package_name", "")
+            cve["dependency_type"] = classification.get(package_name, "unknown")
 
     if config['caching']['enabled']:
         scan_id = cache.store_scan_result(results)

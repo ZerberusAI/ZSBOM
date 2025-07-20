@@ -6,10 +6,11 @@ import importlib.metadata
 import os
 import subprocess
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .risk_model import RiskModel
 from .risk_calculator import WeightedRiskCalculator
+from .extract import get_installed_packages
 
 
 def parse_declared_versions(dependencies: Dict[str, Any]) -> Dict[str, str]:
@@ -61,6 +62,23 @@ def parse_package_specifications(dependencies: Dict[str, Dict[str, str]]) -> Dic
     return package_specs
 
 
+def get_all_declared_packages(package_specs: Dict[str, Dict[str, str]]) -> Set[str]:
+    """Get all unique packages declared across all dependency files.
+    
+    Args:
+        package_specs: Package specifications from multiple files
+        
+    Returns:
+        Set of all declared package names
+    """
+    declared_packages = set()
+    
+    for file_name, packages in package_specs.items():
+        declared_packages.update(packages.keys())
+    
+    return declared_packages
+
+
 def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str, str]]) -> Optional[str]:
     """Get the primary declared version for a package based on file priority.
     
@@ -90,15 +108,6 @@ def _package_cve_issues(package: str, cve_list: List[Dict[str, Any]]) -> List[Di
     return [cve for cve in cve_list if cve.get("package_name") == package]
 
 
-def _get_distribution_path(package: str) -> Optional[str]:
-    try:
-        dist = importlib.metadata.distribution(package)
-        path = str(dist.locate_file(""))
-        if os.path.isdir(os.path.join(path, ".git")):
-            return path
-    except importlib.metadata.PackageNotFoundError:
-        pass
-    return None
 
 
 def _last_commit_date(repo_path: str) -> Optional[datetime]:
@@ -138,7 +147,7 @@ def compute_package_score(
     declared_version: str | None,
     cve_list: List[Dict[str, Any]],
     typosquatting_whitelist: List[str],
-    repo_path: Optional[str] = None,
+    repo_path: Optional[str] = None,  # Kept for backward compatibility but ignored
     model: Optional[RiskModel] = None,
 ) -> Dict[str, Any]:
     """Compute a risk score for a package using the ZSBOM Risk Scoring Framework v1.0."""
@@ -149,13 +158,13 @@ def compute_package_score(
     calculator = WeightedRiskCalculator(model)
     
     # Calculate comprehensive score using the new framework
+    # Note: repo_path is no longer used - repository discovery is now handled automatically
     result = calculator.calculate_score(
         package=package,
         installed_version=installed_version,
         declared_version=declared_version,
         cve_list=cve_list,
         typosquatting_whitelist=typosquatting_whitelist,
-        repo_path=repo_path,
     )
     
     # Convert to legacy format for backward compatibility
@@ -214,8 +223,9 @@ def _convert_details_to_legacy_format(framework_result: Dict[str, Any]) -> Dict[
 def score_packages(
     validation_results: Dict[str, Any],
     dependencies: Dict[str, Dict[str, str]],
-    installed_packages: Dict[str, str],
+    transitive_analysis: Dict[str, Any],
     model: Optional[RiskModel] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Return detailed risk scores using enhanced dependency file parsing.
     
@@ -228,14 +238,18 @@ def score_packages(
     Args:
         validation_results: CVE and vulnerability data
         dependencies: Enhanced dependency data from extract.py
-        installed_packages: Currently installed packages
+        transitive_analysis: Transitive analysis results with resolved versions
         model: Risk model configuration
+        config: Configuration dictionary for transitive analysis settings
         
     Returns:
         List of detailed risk scores with enhanced declared vs installed analysis
     """
     if model is None:
         model = RiskModel()
+    
+    if config is None:
+        config = {}
 
     calculator = WeightedRiskCalculator(model)
     scores = []
@@ -244,27 +258,57 @@ def score_packages(
     
     # Parse package specifications from enhanced format
     package_specs = parse_package_specifications(dependencies)
+    
+    # Get resolved versions from transitive analysis
+    resolved_versions = transitive_analysis.get("resolution_details", {})
+    classification = transitive_analysis.get("classification", {})
+    
+    # Determine which packages to score
+    include_transitive = config.get('transitive_analysis', {}).get('include_in_risk_scoring', True)
+    
+    if include_transitive and resolved_versions:
+        # Score all resolved packages (direct + transitive)
+        packages_to_score = set(resolved_versions.keys())
+        print(f"📦 Analyzing {len(packages_to_score)} packages for risk assessment (including transitive dependencies)...")
+    else:
+        # Score only declared packages (backward compatibility)
+        packages_to_score = get_all_declared_packages(package_specs)
+        print(f"📦 Analyzing {len(packages_to_score)} packages for risk assessment (declared dependencies only)...")
+    
+    # Fallback: if no resolved versions available (pip-tools unavailable), use installed packages
+    if not resolved_versions:
+        print("⚠️ No resolved versions available, falling back to environment packages")
+        environment_packages = get_installed_packages()
+        resolved_versions = {pkg: environment_packages.get(pkg) for pkg in packages_to_score if pkg in environment_packages}
 
-    for pkg, inst_ver in installed_packages.items():
-        # Get primary declared version for backward compatibility
+    for pkg in packages_to_score:
+        # Get resolved version for this package (keep variable name as installed_version for API compatibility)
+        installed_version = resolved_versions.get(pkg)
+        if installed_version is None:
+            # Package not resolved - skip for now
+            # This could happen if pip-tools failed, package has conflicts, or package not installed
+            continue
+            
+        # Get primary declared version (None for transitive dependencies)
         primary_declared_ver = get_primary_declared_version(pkg, package_specs)
         
-        # Get CVEs and repo path
+        # Get CVEs
         cves = _package_cve_issues(pkg, cve_data)
-        repo_path = _get_distribution_path(pkg)
         
         # Calculate score with enhanced package specification data
         detailed_score = calculator.calculate_score(
             package=pkg,
-            installed_version=inst_ver,
+            installed_version=installed_version,
             declared_version=primary_declared_ver,
             cve_list=cves,
             typosquatting_whitelist=typosquatting_whitelist,
-            repo_path=repo_path,
             # Pass enhanced data for new declared vs installed analysis
             dependency_files=dependencies,
             package_specs=package_specs,
         )
+        
+        # Add dependency classification information
+        detailed_score["dependency_type"] = classification.get(pkg, "unknown")
         
         scores.append(detailed_score)
 

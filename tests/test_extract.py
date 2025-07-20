@@ -285,8 +285,13 @@ class TestExtractDependenciesFunction:
             req_file = Path(temp_dir) / "requirements.txt"
             req_file.write_text("requests==2.28.0\nnumpy>=1.21.0")
             
-            deps = extract_dependencies(temp_dir)
+            result = extract_dependencies(temp_dir)
             
+            # New format includes both dependencies and transitive_analysis
+            assert "dependencies" in result
+            assert "transitive_analysis" in result
+            
+            deps = result["dependencies"]
             assert "requirements.txt" in deps
             assert "runtime" in deps
             assert deps["requirements.txt"]["requests"] == "==2.28.0"
@@ -295,10 +300,12 @@ class TestExtractDependenciesFunction:
     def test_extract_dependencies_current_directory(self):
         """Test extract_dependencies with default current directory."""
         # This should run without errors and return runtime packages
-        deps = extract_dependencies()
+        result = extract_dependencies()
         
-        assert "runtime" in deps
-        assert isinstance(deps["runtime"], dict)
+        assert "dependencies" in result
+        assert "transitive_analysis" in result
+        assert "runtime" in result["dependencies"]
+        assert isinstance(result["dependencies"]["runtime"], dict)
 
     def test_multiple_file_formats(self):
         """Test extraction from multiple file formats simultaneously."""
@@ -314,8 +321,13 @@ class TestExtractDependenciesFunction:
 dependencies = ["requests>=2.28.0", "flask>=2.0.0"]
             """)
             
-            deps = extract_dependencies(temp_dir)
+            result = extract_dependencies(temp_dir)
             
+            # New format includes both dependencies and transitive_analysis
+            assert "dependencies" in result
+            assert "transitive_analysis" in result
+            
+            deps = result["dependencies"]
             # Should have both files
             assert "requirements.txt" in deps
             assert "pyproject.toml" in deps

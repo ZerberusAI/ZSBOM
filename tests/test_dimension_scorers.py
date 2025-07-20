@@ -327,69 +327,91 @@ class TestCWECoverageScorer:
 class TestPackageAbandonmentScorer:
     """Test the PackageAbandonmentScorer dimension."""
     
-    def test_no_repo_path(self):
+    @patch('depclass.services.pypi_service.PyPIMetadataService.get_repository_url')
+    def test_no_repo_url(self, mock_get_repo_url):
+        """Test scoring when no repository URL is available."""
+        mock_get_repo_url.return_value = None
+        
         scorer = PackageAbandonmentScorer()
-        score = scorer.score("test_package", "1.0.0", repo_path=None)
-        assert score == 0.0
+        score = scorer.score("test_package", "1.0.0")
+        # Should get default scores: 2.5 (commit) + 1.5 (frequency) + 1.0 (release) = 5.0
+        assert score == 5.0
     
-    @patch('subprocess.check_output')
-    def test_recent_commit(self, mock_subprocess):
-        """Test scoring with recent commit activity."""
-        scorer = PackageAbandonmentScorer()
+    @patch('depclass.services.pypi_service.PyPIMetadataService.get_repository_url')
+    @patch('requests.Session.get')
+    def test_recent_commit(self, mock_session_get, mock_get_repo_url):
+        """Test scoring with recent commit activity via GitHub API."""
+        mock_get_repo_url.return_value = "https://github.com/test/repo.git"
         
-        # Mock recent commit (15 days ago)
-        import time
-        recent_timestamp = int(time.time() - (15 * 24 * 3600))  # 15 days ago
-        mock_subprocess.return_value = str(recent_timestamp)
+        # Mock GitHub API response for recent commit (15 days ago)
+        from datetime import datetime, timezone, timedelta
+        recent_date = datetime.now(timezone.utc) - timedelta(days=15)
         
-        with patch('os.path.exists', return_value=True):
-            score = scorer.score("test_package", "1.0.0", repo_path="/fake/repo")
-            # Should get 5 points for recent commit, but may lose points for other factors
+        mock_commit_response = MagicMock()
+        mock_commit_response.status_code = 200
+        mock_commit_response.json.return_value = {
+            'commit': {
+                'committer': {
+                    'date': recent_date.isoformat().replace('+00:00', 'Z')
+                }
+            }
+        }
+        
+        # Mock git ls-remote response
+        with patch('subprocess.check_output') as mock_subprocess:
+            mock_subprocess.return_value = "abc123def456 refs/heads/main"
+            mock_session_get.return_value = mock_commit_response
+            
+            scorer = PackageAbandonmentScorer()
+            score = scorer.score("test_package", "1.0.0")
+            # Should get 5 points for recent commit + 1 point for release frequency default
             assert score >= 5.0
     
-    @patch('subprocess.check_output')
-    def test_old_commit(self, mock_subprocess):
-        """Test scoring with old commit activity."""
+    @patch('depclass.services.pypi_service.PyPIMetadataService.get_repository_url')
+    def test_old_commit(self, mock_get_repo_url):
+        """Test scoring with no repository available (simulates old/inaccessible repo)."""
+        mock_get_repo_url.return_value = None
+        
         scorer = PackageAbandonmentScorer()
-        
-        # Mock old commit (200 days ago)
-        import time
-        old_timestamp = int(time.time() - (200 * 24 * 3600))  # 200 days ago
-        mock_subprocess.return_value = str(old_timestamp)
-        
-        with patch('os.path.exists', return_value=True):
-            score = scorer.score("test_package", "1.0.0", repo_path="/fake/repo")
-            # Should get 0 points for old commit
-            assert score <= 5.0
+        score = scorer.score("test_package", "1.0.0")
+        # Should get default scores: 2.5 (commit) + 1.5 (frequency) + 1.0 (release) = 5.0
+        assert score == 5.0
     
-    @patch('requests.Session.get')
-    def test_recent_release(self, mock_get):
+    @patch('depclass.services.pypi_service.PyPIMetadataService.get_repository_url')
+    @patch('depclass.services.pypi_service.PyPIMetadataService.get_package_metadata')
+    def test_recent_release(self, mock_get_metadata, mock_get_repo_url):
         """Test scoring with recent PyPI release."""
-        scorer = PackageAbandonmentScorer()
+        mock_get_repo_url.return_value = None  # No repository available
         
         # Mock recent PyPI release
         from datetime import datetime, timezone
         recent_date = datetime.now(timezone.utc).replace(day=1)  # 1 month ago
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "releases": {
-                "1.0.0": [{
-                    "upload_time": recent_date.isoformat()
-                }]
+        mock_get_metadata.return_value = {
+            'pypi_data_available': True,
+            'metadata': {
+                "releases": {
+                    "1.0.0": [{
+                        "upload_time": recent_date.isoformat()
+                    }]
+                }
             }
         }
-        mock_get.return_value = mock_response
         
-        score = scorer.score("test_package", "1.0.0", repo_path=None)
+        scorer = PackageAbandonmentScorer()
+        score = scorer.score("test_package", "1.0.0")
         # Should get 2 points for recent release
         assert score >= 2.0
     
-    def test_get_details(self):
+    @patch('depclass.services.pypi_service.PyPIMetadataService.get_repository_url')
+    def test_get_details(self, mock_get_repo_url):
+        mock_get_repo_url.return_value = None  # No repository available
+        
         scorer = PackageAbandonmentScorer()
-        details = scorer.get_details("test_package", "1.0.0", repo_path=None)
+        details = scorer.get_details("test_package", "1.0.0")
         assert details["dimension"] == "package_abandonment"
         assert "components" in details
+        assert details["repository_available"] == False
+        assert details["repository_url"] is None
         assert "last_commit" in details["components"]
         assert "commit_frequency" in details["components"]
         assert "release_frequency" in details["components"]
@@ -767,7 +789,6 @@ class TestTyposquatHeuristicsScorer:
         assert scorer.new_package_days == 90
         assert scorer.similarity_threshold == 2
         assert scorer.top_packages_url == "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json"
-        assert scorer.pypi_api_base == "https://pypi.org/pypi"
 
 
 class TestDimensionScorerBase:

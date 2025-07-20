@@ -8,3 +8,5 @@ zsbom.log
 *.pyc
 *.egg-info
 build/*
+risk_report.json
+transitive_analysis.json
