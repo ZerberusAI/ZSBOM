@@ -16,7 +16,7 @@ def test_compute_package_score_high():
         installed_version='1.0',
         declared_version='0.9',
         cve_list=[{'package_name': pkg, 'vuln_id': 'CVE-1', 'cwes': ['CWE-79'], 'severity': 'HIGH'}],
-        typos=['foo'],
+        typosquatting_whitelist=[],
         repo_path=None,
         model=RiskModel()
     )
@@ -30,12 +30,13 @@ def test_compute_package_score_low():
     res = risk.compute_package_score(
         package=pkg,
         installed_version='1.0',
-        declared_version='1.0',  # Exact match
+        declared_version='==1.0',  # Exact match
         cve_list=[],  # No CVEs
-        typos=[],  # Not a typosquat
+        typosquatting_whitelist=[pkg],  # Add to whitelist to ensure high typosquatting score
         repo_path=None,
         model=RiskModel()
     )
+
     assert res['risk'] == 'low'
     assert res['score'] >= 80  # Low risk is 80+ in new framework
 
@@ -66,7 +67,7 @@ def test_weighted_risk_calculator():
         installed_version='1.0.0',
         declared_version='1.0.0',
         cve_list=[],
-        typosquat_blacklist=[],
+        typosquatting_whitelist=[],
         repo_path=None,
     )
     
