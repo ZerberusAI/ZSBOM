@@ -1,9 +1,10 @@
 import argparse
+import json
 import yaml
-from depclass.validate import validate, get_installed_packages
+from depclass.validate import validate
 from depclass.sbom import read_json_file, generate_sbom
 from depclass.extract import extract_dependencies
-from depclass.risk import parse_declared_versions, score_packages
+from depclass.risk import score_packages
 from depclass.risk_model import load_model
 
 def load_config(path):
@@ -14,6 +15,10 @@ def merge_config_and_args(config, args):
     # Override config values with CLI args if provided
     if args.output is not None:
         config["output"]["sbom_file"] = args.output
+    
+    # Add ignore_conflicts flag to config for dependency analysis
+    config["ignore_conflicts"] = getattr(args, "ignore_conflicts", False)
+    
     return config
 
 def main():
@@ -21,6 +26,10 @@ def main():
     parser.add_argument("-c", "--config", default="config.yaml", help="Path to config YAML")
     parser.add_argument("-o", "--output", help="Output file override")
     parser.add_argument("-sb", "--skip-sbom", help="Skip the SBOM report generation", default=False)
+    
+    # Transitive dependency analysis flags
+    parser.add_argument("--ignore-conflicts", action="store_true", 
+                        help="Continue analysis even when dependency conflicts are detected")
 
     args = parser.parse_args()
 
@@ -34,16 +43,92 @@ def main():
 
     print(f"Running scan with config: {args.config}")
 
-    results = validate(config)
+    # Initialize cache if enabled
+    cache = None
+    if config['caching']['enabled']:
+        from depclass.db.vulnerability import VulnerabilityCache
+        import os
+        os.makedirs(os.path.dirname(config['caching']['path']), exist_ok=True)
+        cache = VulnerabilityCache(config['caching']['path'])
 
-    declared = parse_declared_versions(extract_dependencies())
+    # Extract dependencies using enhanced parser with transitive analysis
+    dependencies = extract_dependencies(config=config, cache=cache)
+    
+    # Extract the dependencies dict from the new transitive analysis format
+    dependency_data = dependencies.get("dependencies", dependencies)
+    transitive_data = dependencies.get("transitive_analysis", {})
+    
+    # Pass transitive analysis to validation for comprehensive security checking
+    results = validate(config, cache, transitive_data)
+    
+    # Use enhanced scoring with full 3-factor declared vs installed analysis
     model = load_model(config.get("risk_model"))
-    scores = score_packages(results, declared, get_installed_packages(), model)
+    
+    print("\n🎯 Running risk assessment...")
+    scores = score_packages(results, dependency_data, transitive_data, model, config)
+
+    # Display individual package risk results
+    if scores:
+        print("\n📊 Risk Assessment Results:")
+        print("=" * 80)
+        for score in scores:
+            package = score['package']
+            final_score = score['final_score'] 
+            risk_level = score['risk_level']
+            dependency_type = score.get('dependency_type', 'unknown')
+
+            if risk_level == "high":
+            
+                # Display package header with risk emoji and dependency type
+                risk_emoji = "🔴" if risk_level == "high" else "🟡" if risk_level == "medium" else "🟢"
+                type_indicator = "📦" if dependency_type == "direct" else "⬇️" if dependency_type == "transitive" else "❓"
+                print(f"{risk_emoji} {type_indicator} {package} - Score: {final_score}/100 ({risk_level.upper()} RISK, {dependency_type.upper()})")
+                
+                # Display dimension breakdown
+                dimensions = score['dimension_scores']
+                print(f"   • Declared vs Installed: {dimensions['declared_vs_installed']}/10")
+                print(f"   • Known CVEs: {dimensions['known_cves']}/10") 
+                print(f"   • CWE Coverage: {dimensions['cwe_coverage']}/10")
+                print(f"   • Package Abandonment: {dimensions['package_abandonment']}/10")
+                print(f"   • Typosquat Heuristics: {dimensions['typosquat_heuristics']}/10")
+                print()
+        
+        # Calculate and display summary statistics
+        high_risk = [s for s in scores if s['risk_level'] == 'high']
+        medium_risk = [s for s in scores if s['risk_level'] == 'medium'] 
+        low_risk = [s for s in scores if s['risk_level'] == 'low']
+        
+        # Calculate breakdown by dependency type
+        direct_packages = [s for s in scores if s.get('dependency_type') == 'direct']
+        transitive_packages = [s for s in scores if s.get('dependency_type') == 'transitive']
+        
+        print("📈 Risk Assessment Summary:")
+        print(f"   🔴 High Risk: {len(high_risk)} packages")
+        print(f"   🟡 Medium Risk: {len(medium_risk)} packages") 
+        print(f"   🟢 Low Risk: {len(low_risk)} packages")
+        print(f"   📦 Direct Dependencies: {len(direct_packages)} packages")
+        print(f"   ⬇️ Transitive Dependencies: {len(transitive_packages)} packages")
+        print(f"   📊 Total Analyzed: {len(scores)} packages")
+        print()
 
     with open(config["output"].get("risk_file", "risk_report.json"), "w") as fp:
-        yaml.safe_dump(scores, fp)
+        json.dump(scores, fp, indent=4)
+    
+    print(f"✅ Risk assessment completed. Results saved in `{config['output'].get('risk_file', 'risk_report.json')}`.")
+
+    # Save transitive analysis results if available
+    if "transitive_analysis" in dependencies:
+        transitive_output_file = config["output"].get("transitive_file", "transitive_analysis.json")
+        with open(transitive_output_file, "w") as fp:
+            json.dump(dependencies["transitive_analysis"], fp, indent=4)
+        print(f"📊 Transitive analysis results saved to {transitive_output_file}")
 
     if not args.skip_sbom:
         cve_data = read_json_file("validation_report.json")
         if cve_data:
-            generate_sbom(get_installed_packages(), cve_data, config)
+            # Use resolution details from transitive analysis for complete dependency coverage
+            sbom_dependencies = transitive_data.get("resolution_details", dependency_data)
+            generate_sbom(sbom_dependencies, cve_data, config)
+
+if __name__ == "__main__":
+    main()

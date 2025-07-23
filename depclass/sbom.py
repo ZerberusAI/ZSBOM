@@ -8,8 +8,10 @@ from cyclonedx.model.vulnerability import (BomTarget, Vulnerability,
                                            VulnerabilityRating,
                                            VulnerabilityReference,
                                            VulnerabilitySeverity,
+                                           VulnerabilityScoreSource,
                                            VulnerabilitySource,
-                                           BomTargetVersionRange)
+                                           BomTargetVersionRange,
+                                           ImpactAnalysisAffectedStatus)
 from cyclonedx.output.json import JsonV1Dot5
 
 SEVERITY_MAP = {
@@ -61,13 +63,20 @@ def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
         if not vuln_id:
             continue
 
-        if vuln.get('score', None):
-            severity = VulnerabilitySeverity.get_from_cvss_scores(scores=(vuln.get('score')))
+        # Enhanced severity and CVSS handling
+        cvss_vector = vuln.get("cvss_vector", "")
+        score = vuln.get("score")
+        if score and cvss_vector:
+            severity = VulnerabilitySeverity.get_from_cvss_scores(scores=(score,))
         else:
             severity = SEVERITY_MAP.get(vuln.get("severity", "").lower(), VulnerabilitySeverity.UNKNOWN)
+        
         cwes = vuln.get("cwes") or []
         summary = vuln.get("summary", "")
         references = vuln.get("references", [])
+        reference_types = vuln.get("reference_types", {})
+        fix_version = vuln.get("fix_version", "")
+        aliases = vuln.get("aliases", [])
 
         # Construct Vulnerability object
         v = Vulnerability(
@@ -75,31 +84,74 @@ def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
             bom_ref=component.bom_ref
         )
         
-        # v.component = component
         v.source = VulnerabilitySource(name="OSV.dev", url=f"https://osv.dev/vulnerability/{vuln_id}")
         v.description = summary
 
-        v.ratings.add(
-            VulnerabilityRating(
-                score=None,
-                severity=severity,
-                method=None,
-                source=VulnerabilitySource(name="OSV.dev")
-            )
-        )
+        # Enhanced rating with CVSS vector support
+        rating_kwargs = {
+            "severity": severity,
+            "source": VulnerabilitySource(name="OSV.dev")
+        }
+        
+        if score:
+            rating_kwargs["score"] = score
+        
+        if cvss_vector:
+            rating_kwargs["vector"] = cvss_vector
+            # Determine CVSS method from vector
+            if cvss_vector.startswith("CVSS:3.1"):
+                rating_kwargs["method"] = VulnerabilityScoreSource.CVSS_V3_1
+            elif cvss_vector.startswith("CVSS:3.0"):
+                rating_kwargs["method"] = VulnerabilityScoreSource.CVSS_V3
+            elif cvss_vector.startswith("CVSS:2.0"):
+                rating_kwargs["method"] = VulnerabilityScoreSource.CVSS_V2
+
+        v.ratings.add(VulnerabilityRating(**rating_kwargs))
 
         v.cwes = parse_cwes(cwes)
 
+        # Enhanced reference handling with types
         for ref_url in references:
+            ref_type = reference_types.get(ref_url, "WEB")
             v.references.add(VulnerabilityReference(
-                source=VulnerabilitySource(name="external", url=ref_url),
-                id=ref_url  # you can extract a meaningful ID if needed
+                source=VulnerabilitySource(name=ref_type.lower(), url=ref_url),
+                id=ref_url
             ))
+
+        # Enhanced version range handling with fix version support
+        version_ranges = [
+            BomTargetVersionRange(
+                version=installed_version, 
+                status=ImpactAnalysisAffectedStatus.AFFECTED
+            )
+        ]
+        
+        # Add fix version range if available
+        if fix_version:
+            version_ranges.append(
+                BomTargetVersionRange(
+                    version=f">={fix_version}",
+                    status=ImpactAnalysisAffectedStatus.UNAFFECTED
+                )
+            )
 
         v.affects.add(BomTarget(
             ref=component.bom_ref,
-            versions=[BomTargetVersionRange(version=installed_version)]
+            versions=version_ranges
         ))
+
+        # Add aliases as additional references for cross-referencing
+        for alias in aliases:
+            if alias.startswith("CVE-"):
+                v.references.add(VulnerabilityReference(
+                    source=VulnerabilitySource(name="nvd", url=f"https://nvd.nist.gov/vuln/detail/{alias}"),
+                    id=alias
+                ))
+            elif alias.startswith("GHSA-"):
+                v.references.add(VulnerabilityReference(
+                    source=VulnerabilitySource(name="github", url=f"https://github.com/advisories/{alias}"),
+                    id=alias
+                ))
 
         bom.vulnerabilities.add(v)
 
