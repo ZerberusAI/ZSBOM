@@ -17,8 +17,8 @@ transitive_analysis:
 # Private repository configuration
 private_repositories:
   index_url: ""  # Primary index (--index-url), empty means use PyPI
-  extra_index_urls: []  # Additional indexes (--extra-index-url)
-  trusted_hosts: []  # For self-signed certs (--trusted-host)
+  extra_index_urls: ["http://admin:admin123@localhost:8008/simple"]  # Additional indexes (--extra-index-url)
+  trusted_hosts: ["localhost"]  # For self-signed certs (--trusted-host)
   find_links: []  # Additional package locations (--find-links)
   no_index: false  # Disable PyPI entirely (--no-index)
 
