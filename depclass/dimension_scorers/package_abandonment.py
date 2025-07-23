@@ -245,7 +245,7 @@ class PackageAbandonmentScorer(DimensionScorer):
                         ["git", "ls-remote", repo_url, f"refs/heads/{branch}"],
                         text=True,
                         stderr=subprocess.DEVNULL,
-                        timeout=15,  # Reduced timeout
+                        timeout=10,  # Optimized timeout for parallel execution
                         env=env
                     ).strip()
                     

@@ -75,9 +75,9 @@ typosquatting_whitelist:
   - "setuptools"
 
 min_versions:
-  flask: "2.0.0"
+  # flask: "2.0.0"
   requests: "2.26.0"
-  numpy: "1.21.0"
+  # numpy: "1.21.0"
 
 sources:
   cve:

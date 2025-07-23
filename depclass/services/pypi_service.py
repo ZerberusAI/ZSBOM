@@ -6,8 +6,10 @@ import requests
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,23 @@ class PyPIMetadataService:
         self.session.headers.update({
             'User-Agent': 'ZSBOM/1.0 (Package Risk Assessment)'
         })
+        
+        # Connection pooling for better performance
+        retry_strategy = Retry(
+            total=2,
+            backoff_factor=0.1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        
+        adapter = HTTPAdapter(
+            pool_connections=20,  # Number of connection pools
+            pool_maxsize=20,      # Max connections per pool
+            max_retries=retry_strategy
+        )
+        
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+        
         self._init_cache_db()
 
     def _init_cache_db(self) -> None:
@@ -72,12 +91,13 @@ class PyPIMetadataService:
         except Exception:
             return False
 
-    def get_package_metadata(self, package_name: str, ttl_hours: int = 1) -> Optional[Dict[str, Any]]:
+    def get_package_metadata(self, package_name: str, ttl_hours: int = 1, top_packages: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
         """Get package metadata from PyPI with caching.
         
         Args:
             package_name: Name of the package
             ttl_hours: Cache time-to-live in hours
+            top_packages: Optional list of top packages with download counts to reuse
             
         Returns:
             Dictionary with metadata, download_count, creation_date, or None if failed
@@ -115,9 +135,25 @@ class PyPIMetadataService:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Extract download count from info
+                # Extract download count from top_packages list if provided, otherwise from PyPI API
                 download_count = 0
                 info = data.get('info', {})
+                
+                # First try to get download count from top_packages list (reuse existing data)
+                if top_packages:
+                    for pkg in top_packages:
+                        if pkg.get('project', '').lower() == package_name.lower():
+                            download_count = pkg.get('download_count', 0)
+                            break
+                
+                # Fallback to PyPI API downloads field (currently disabled, returns -1)
+                if download_count == 0:
+                    pypi_downloads = info.get('downloads', {})
+                    if isinstance(pypi_downloads, dict):
+                        # Try different download count fields
+                        last_month = pypi_downloads.get('last_month', -1)
+                        if last_month > 0:
+                            download_count = last_month
                 
                 # Extract creation date from first release
                 creation_date = None

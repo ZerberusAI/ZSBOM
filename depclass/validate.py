@@ -144,21 +144,21 @@ def check_cwe(config, cache):
 
 # Main validation function
 def validate(config, cache=None, transitive_analysis=None):
-    # Get packages to validate - prefer resolved packages from transitive analysis
-    dependencies = get_installed_packages()
-    
     # If transitive analysis is available and transitive validation is enabled, use resolved packages
     include_transitive = config.get('transitive_analysis', {}).get('include_in_validation', True)
     if transitive_analysis and include_transitive:
         resolved_packages = transitive_analysis.get("resolution_details", {})
         if resolved_packages:
-            # Merge resolved packages with installed packages, giving preference to resolved versions
-            dependencies = {**dependencies, **resolved_packages}
+            # Use only resolved packages from pip-compile (declared + transitive dependencies)
+            dependencies = resolved_packages
             logging.info(f"🔍 Validating {len(dependencies)} packages (including transitive dependencies)")
         else:
-            logging.warning("⚠️ No resolved packages found in transitive analysis, using installed packages only")
+            logging.warning("⚠️ No resolved packages found in transitive analysis, cannot validate without dependency resolution")
+            dependencies = {}
     else:
-        logging.info(f"🔍 Validating {len(dependencies)} packages (direct dependencies only)")
+        # For backward compatibility when transitive analysis is disabled
+        logging.warning("⚠️ Transitive analysis disabled, validation limited to resolved packages only")  
+        dependencies = transitive_analysis.get("resolution_details", {}) if transitive_analysis else {}
     
     # Use provided cache or create new one if caching is enabled
     if cache is None and config['caching']['enabled']:

@@ -68,9 +68,6 @@ class DependencyFileParser:
                 except Exception as e:
                     print(f"⚠️ Error parsing {file_name}: {e}")
         
-        # Add runtime (installed) packages
-        dependencies["runtime"] = self._get_installed_packages()
-        
         return dependencies
     
     def _parse_file(self, file_path: Path) -> Optional[Dict[str, str]]:

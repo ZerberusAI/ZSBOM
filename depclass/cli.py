@@ -1,7 +1,7 @@
 import argparse
 import json
 import yaml
-from depclass.validate import validate, get_installed_packages
+from depclass.validate import validate
 from depclass.sbom import read_json_file, generate_sbom
 from depclass.extract import extract_dependencies
 from depclass.risk import score_packages
@@ -76,20 +76,22 @@ def main():
             final_score = score['final_score'] 
             risk_level = score['risk_level']
             dependency_type = score.get('dependency_type', 'unknown')
+
+            if risk_level == "high":
             
-            # Display package header with risk emoji and dependency type
-            risk_emoji = "🔴" if risk_level == "high" else "🟡" if risk_level == "medium" else "🟢"
-            type_indicator = "📦" if dependency_type == "direct" else "⬇️" if dependency_type == "transitive" else "❓"
-            print(f"{risk_emoji} {type_indicator} {package} - Score: {final_score}/100 ({risk_level.upper()} RISK, {dependency_type.upper()})")
-            
-            # Display dimension breakdown
-            dimensions = score['dimension_scores']
-            print(f"   • Declared vs Installed: {dimensions['declared_vs_installed']}/10")
-            print(f"   • Known CVEs: {dimensions['known_cves']}/10") 
-            print(f"   • CWE Coverage: {dimensions['cwe_coverage']}/10")
-            print(f"   • Package Abandonment: {dimensions['package_abandonment']}/10")
-            print(f"   • Typosquat Heuristics: {dimensions['typosquat_heuristics']}/10")
-            print()
+                # Display package header with risk emoji and dependency type
+                risk_emoji = "🔴" if risk_level == "high" else "🟡" if risk_level == "medium" else "🟢"
+                type_indicator = "📦" if dependency_type == "direct" else "⬇️" if dependency_type == "transitive" else "❓"
+                print(f"{risk_emoji} {type_indicator} {package} - Score: {final_score}/100 ({risk_level.upper()} RISK, {dependency_type.upper()})")
+                
+                # Display dimension breakdown
+                dimensions = score['dimension_scores']
+                print(f"   • Declared vs Installed: {dimensions['declared_vs_installed']}/10")
+                print(f"   • Known CVEs: {dimensions['known_cves']}/10") 
+                print(f"   • CWE Coverage: {dimensions['cwe_coverage']}/10")
+                print(f"   • Package Abandonment: {dimensions['package_abandonment']}/10")
+                print(f"   • Typosquat Heuristics: {dimensions['typosquat_heuristics']}/10")
+                print()
         
         # Calculate and display summary statistics
         high_risk = [s for s in scores if s['risk_level'] == 'high']
@@ -124,7 +126,9 @@ def main():
     if not args.skip_sbom:
         cve_data = read_json_file("validation_report.json")
         if cve_data:
-            generate_sbom(get_installed_packages(), cve_data, config)
+            # Use resolution details from transitive analysis for complete dependency coverage
+            sbom_dependencies = transitive_data.get("resolution_details", dependency_data)
+            generate_sbom(sbom_dependencies, cve_data, config)
 
 if __name__ == "__main__":
     main()

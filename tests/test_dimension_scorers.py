@@ -727,6 +727,98 @@ class TestTyposquatHeuristicsScorer:
         scorer = TyposquatHeuristicsScorer()
         mock_init_cache.assert_called_once()
     
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_requestd_typosquatting_case(self, mock_metadata, mock_top_packages):
+        """Test the specific 'requestd' typosquatting case for framework compliance."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = None  # Simulate metadata unavailable
+        
+        scorer = TyposquatHeuristicsScorer()
+        score = scorer.score("requestd", "1.0.0")
+        
+        # With fixes, should be High Risk (≤3 pts): 
+        # String Distance: 0pts, Downloads+Similarity: 0pts, Character Sub: 2pts, 
+        # Keyboard Proximity: 0pts, Creation Date: 0pts = 2 pts total
+        assert score <= 3.0, f"Expected ≤3.0 for High Risk, got {score}"
+        
+        # Get detailed breakdown
+        details = scorer.get_details("requestd", "1.0.0")
+        assert "very_similar_to_popular_package" in details["risk_indicators"]
+        assert details["factors"]["string_distance"]["score"] == 0  # Distance 1 from "requests"
+        assert details["factors"]["downloads_similarity"]["score"] == 0  # No metadata + similarity
+        assert details["factors"]["keyboard_proximity"]["score"] == 0  # s→d proximity
+        assert details["factors"]["creation_date"]["score"] == 0  # No date + similarity
+        
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_metadata_unavailable_with_similarity(self, mock_metadata, mock_top_packages):
+        """Test downloads + similarity factor when metadata unavailable with high similarity."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = None
+        
+        scorer = TyposquatHeuristicsScorer()
+        details = scorer.get_details("requsts", "1.0.0")  # Distance 1 from "requests"
+        
+        # Should get 0 points for downloads_similarity due to metadata unavailable + similarity
+        downloads_factor = details["factors"]["downloads_similarity"]
+        assert downloads_factor["score"] == 0
+        assert downloads_factor["details"]["reason"] == "metadata_unavailable_with_similarity"
+        assert downloads_factor["details"]["has_similarity"] == True
+        
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')  
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_creation_date_unavailable_with_similarity(self, mock_metadata, mock_top_packages):
+        """Test creation date factor when date unavailable with high similarity.""" 
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = {"metadata": {"info": {"name": "test_package"}}}  # No creation_date
+        
+        scorer = TyposquatHeuristicsScorer()
+        details = scorer.get_details("requsts", "1.0.0")  # Distance 1 from "requests"
+        
+        # Should get 0 points for creation_date due to date unavailable + similarity
+        creation_factor = details["factors"]["creation_date"]
+        assert creation_factor["score"] == 0
+        assert creation_factor["details"]["reason"] == "date_unavailable_with_similarity"
+        assert creation_factor["details"]["has_similarity"] == True
+        
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata') 
+    def test_keyboard_proximity_sd_substitution(self, mock_metadata, mock_top_packages):
+        """Test keyboard proximity detection for s→d substitution."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = self.mock_pypi_metadata
+        
+        scorer = TyposquatHeuristicsScorer()
+        details = scorer.get_details("requestd", "1.0.0")
+        
+        # Should detect s→d keyboard proximity error
+        proximity_factor = details["factors"]["keyboard_proximity"]
+        assert proximity_factor["score"] == 0
+        assert len(proximity_factor["details"]["proximity_typos"]) > 0
+        assert any("s→d substitution" in typo for typo in proximity_factor["details"]["proximity_typos"])
+        
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
+    @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')
+    def test_no_similarity_metadata_unavailable(self, mock_metadata, mock_top_packages):
+        """Test that packages with no similarity get neutral scores even when metadata unavailable."""
+        mock_top_packages.return_value = self.mock_top_packages
+        mock_metadata.return_value = None
+        
+        scorer = TyposquatHeuristicsScorer()
+        details = scorer.get_details("completely_unique_package_name_xyz", "1.0.0")
+        
+        # Should get neutral scores when no similarity detected
+        downloads_factor = details["factors"]["downloads_similarity"]
+        assert downloads_factor["score"] == 1  # Neutral score for no similarity
+        assert downloads_factor["details"]["reason"] == "metadata_unavailable"
+        assert downloads_factor["details"]["has_similarity"] == False
+        
+        creation_factor = details["factors"]["creation_date"]
+        assert creation_factor["score"] == 1  # Neutral score for no similarity
+        assert creation_factor["details"]["reason"] == "date_unavailable"  
+        assert creation_factor["details"]["has_similarity"] == False
+    
     def test_character_substitution_patterns(self):
         """Test character substitution pattern detection."""
         scorer = TyposquatHeuristicsScorer()

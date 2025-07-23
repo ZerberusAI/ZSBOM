@@ -5,12 +5,13 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .risk_model import RiskModel
 from .risk_calculator import WeightedRiskCalculator
-from .extract import get_installed_packages
 
 
 def parse_declared_versions(dependencies: Dict[str, Any]) -> Dict[str, str]:
@@ -262,6 +263,7 @@ def score_packages(
     # Get resolved versions from transitive analysis
     resolved_versions = transitive_analysis.get("resolution_details", {})
     classification = transitive_analysis.get("classification", {})
+    dependency_tree = transitive_analysis.get("dependency_tree", {})
     
     # Determine which packages to score
     include_transitive = config.get('transitive_analysis', {}).get('include_in_risk_scoring', True)
@@ -275,19 +277,19 @@ def score_packages(
         packages_to_score = get_all_declared_packages(package_specs)
         print(f"📦 Analyzing {len(packages_to_score)} packages for risk assessment (declared dependencies only)...")
     
-    # Fallback: if no resolved versions available (pip-tools unavailable), use installed packages
+    # Fallback: if no resolved versions available (pip-tools unavailable), cannot proceed with risk assessment
     if not resolved_versions:
-        print("⚠️ No resolved versions available, falling back to environment packages")
-        environment_packages = get_installed_packages()
-        resolved_versions = {pkg: environment_packages.get(pkg) for pkg in packages_to_score if pkg in environment_packages}
+        print("⚠️ No resolved versions available from transitive analysis, cannot perform risk assessment")
+        return []
 
-    for pkg in packages_to_score:
+    def score_single_package(pkg: str) -> Optional[Dict[str, Any]]:
+        """Score a single package (for parallel execution)."""
         # Get resolved version for this package (keep variable name as installed_version for API compatibility)
         installed_version = resolved_versions.get(pkg)
         if installed_version is None:
             # Package not resolved - skip for now
             # This could happen if pip-tools failed, package has conflicts, or package not installed
-            continue
+            return None
             
         # Get primary declared version (None for transitive dependencies)
         primary_declared_ver = get_primary_declared_version(pkg, package_specs)
@@ -305,11 +307,42 @@ def score_packages(
             # Pass enhanced data for new declared vs installed analysis
             dependency_files=dependencies,
             package_specs=package_specs,
+            # Pass transitive analysis data for effective constraint resolution
+            dependency_tree=dependency_tree,
+            classification=classification,
         )
         
         # Add dependency classification information
         detailed_score["dependency_type"] = classification.get(pkg, "unknown")
         
-        scores.append(detailed_score)
+        return detailed_score
+
+    # Use parallel processing for scoring packages
+    max_workers = min(len(packages_to_score), 10)  # Limit to 10 concurrent workers
+    completed_count = 0
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all scoring tasks
+        future_to_pkg = {executor.submit(score_single_package, pkg): pkg for pkg in packages_to_score}
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_pkg):
+            pkg = future_to_pkg[future]
+            completed_count += 1
+            
+            # Progress reporting - overwrite same line with padding to clear remnants
+            progress_msg = f"📊 Processed {completed_count}/{len(packages_to_score)} packages ({pkg})"
+            # Add moderate padding to clear remnants from longer package names
+            print(f"{progress_msg:<60}", end='\r')
+            sys.stdout.flush()
+            
+            try:
+                result = future.result()
+                if result is not None:
+                    scores.append(result)
+            except Exception as exc:
+                print(f'\n⚠️ Package {pkg} generated an exception: {exc}')
+    
+    print(f"\n✅ Completed risk assessment for {len(scores)} packages")
 
     return scores
