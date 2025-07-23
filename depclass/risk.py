@@ -5,8 +5,10 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .risk_model import RiskModel
 from .risk_calculator import WeightedRiskCalculator
@@ -61,6 +63,23 @@ def parse_package_specifications(dependencies: Dict[str, Dict[str, str]]) -> Dic
     return package_specs
 
 
+def get_all_declared_packages(package_specs: Dict[str, Dict[str, str]]) -> Set[str]:
+    """Get all unique packages declared across all dependency files.
+    
+    Args:
+        package_specs: Package specifications from multiple files
+        
+    Returns:
+        Set of all declared package names
+    """
+    declared_packages = set()
+    
+    for file_name, packages in package_specs.items():
+        declared_packages.update(packages.keys())
+    
+    return declared_packages
+
+
 def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str, str]]) -> Optional[str]:
     """Get the primary declared version for a package based on file priority.
     
@@ -90,15 +109,6 @@ def _package_cve_issues(package: str, cve_list: List[Dict[str, Any]]) -> List[Di
     return [cve for cve in cve_list if cve.get("package_name") == package]
 
 
-def _get_distribution_path(package: str) -> Optional[str]:
-    try:
-        dist = importlib.metadata.distribution(package)
-        path = str(dist.locate_file(""))
-        if os.path.isdir(os.path.join(path, ".git")):
-            return path
-    except importlib.metadata.PackageNotFoundError:
-        pass
-    return None
 
 
 def _last_commit_date(repo_path: str) -> Optional[datetime]:
@@ -137,8 +147,8 @@ def compute_package_score(
     installed_version: str,
     declared_version: str | None,
     cve_list: List[Dict[str, Any]],
-    typos: List[str],
-    repo_path: Optional[str] = None,
+    typosquatting_whitelist: List[str],
+    repo_path: Optional[str] = None,  # Kept for backward compatibility but ignored
     model: Optional[RiskModel] = None,
 ) -> Dict[str, Any]:
     """Compute a risk score for a package using the ZSBOM Risk Scoring Framework v1.0."""
@@ -149,13 +159,13 @@ def compute_package_score(
     calculator = WeightedRiskCalculator(model)
     
     # Calculate comprehensive score using the new framework
+    # Note: repo_path is no longer used - repository discovery is now handled automatically
     result = calculator.calculate_score(
         package=package,
         installed_version=installed_version,
         declared_version=declared_version,
         cve_list=cve_list,
-        typosquat_blacklist=typos,
-        repo_path=repo_path,
+        typosquatting_whitelist=typosquatting_whitelist,
     )
     
     # Convert to legacy format for backward compatibility
@@ -214,8 +224,9 @@ def _convert_details_to_legacy_format(framework_result: Dict[str, Any]) -> Dict[
 def score_packages(
     validation_results: Dict[str, Any],
     dependencies: Dict[str, Dict[str, str]],
-    installed_packages: Dict[str, str],
+    transitive_analysis: Dict[str, Any],
     model: Optional[RiskModel] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Return detailed risk scores using enhanced dependency file parsing.
     
@@ -228,44 +239,110 @@ def score_packages(
     Args:
         validation_results: CVE and vulnerability data
         dependencies: Enhanced dependency data from extract.py
-        installed_packages: Currently installed packages
+        transitive_analysis: Transitive analysis results with resolved versions
         model: Risk model configuration
+        config: Configuration dictionary for transitive analysis settings
         
     Returns:
         List of detailed risk scores with enhanced declared vs installed analysis
     """
     if model is None:
         model = RiskModel()
+    
+    if config is None:
+        config = {}
 
     calculator = WeightedRiskCalculator(model)
     scores = []
     cve_data = validation_results.get("cve_issues", [])
-    typos = validation_results.get("typosquatting_issues", [])
+    typosquatting_whitelist = validation_results.get("typosquatting_whitelist", [])
     
     # Parse package specifications from enhanced format
     package_specs = parse_package_specifications(dependencies)
+    
+    # Get resolved versions from transitive analysis
+    resolved_versions = transitive_analysis.get("resolution_details", {})
+    classification = transitive_analysis.get("classification", {})
+    dependency_tree = transitive_analysis.get("dependency_tree", {})
+    
+    # Determine which packages to score
+    include_transitive = config.get('transitive_analysis', {}).get('include_in_risk_scoring', True)
+    
+    if include_transitive and resolved_versions:
+        # Score all resolved packages (direct + transitive)
+        packages_to_score = set(resolved_versions.keys())
+        print(f"📦 Analyzing {len(packages_to_score)} packages for risk assessment (including transitive dependencies)...")
+    else:
+        # Score only declared packages (backward compatibility)
+        packages_to_score = get_all_declared_packages(package_specs)
+        print(f"📦 Analyzing {len(packages_to_score)} packages for risk assessment (declared dependencies only)...")
+    
+    # Fallback: if no resolved versions available (pip-tools unavailable), cannot proceed with risk assessment
+    if not resolved_versions:
+        print("⚠️ No resolved versions available from transitive analysis, cannot perform risk assessment")
+        return []
 
-    for pkg, inst_ver in installed_packages.items():
-        # Get primary declared version for backward compatibility
+    def score_single_package(pkg: str) -> Optional[Dict[str, Any]]:
+        """Score a single package (for parallel execution)."""
+        # Get resolved version for this package (keep variable name as installed_version for API compatibility)
+        installed_version = resolved_versions.get(pkg)
+        if installed_version is None:
+            # Package not resolved - skip for now
+            # This could happen if pip-tools failed, package has conflicts, or package not installed
+            return None
+            
+        # Get primary declared version (None for transitive dependencies)
         primary_declared_ver = get_primary_declared_version(pkg, package_specs)
         
-        # Get CVEs and repo path
+        # Get CVEs
         cves = _package_cve_issues(pkg, cve_data)
-        repo_path = _get_distribution_path(pkg)
         
         # Calculate score with enhanced package specification data
         detailed_score = calculator.calculate_score(
             package=pkg,
-            installed_version=inst_ver,
+            installed_version=installed_version,
             declared_version=primary_declared_ver,
             cve_list=cves,
-            typosquat_blacklist=typos,
-            repo_path=repo_path,
+            typosquatting_whitelist=typosquatting_whitelist,
             # Pass enhanced data for new declared vs installed analysis
             dependency_files=dependencies,
             package_specs=package_specs,
+            # Pass transitive analysis data for effective constraint resolution
+            dependency_tree=dependency_tree,
+            classification=classification,
         )
         
-        scores.append(detailed_score)
+        # Add dependency classification information
+        detailed_score["dependency_type"] = classification.get(pkg, "unknown")
+        
+        return detailed_score
+
+    # Use parallel processing for scoring packages
+    max_workers = min(len(packages_to_score), 10)  # Limit to 10 concurrent workers
+    completed_count = 0
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all scoring tasks
+        future_to_pkg = {executor.submit(score_single_package, pkg): pkg for pkg in packages_to_score}
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_pkg):
+            pkg = future_to_pkg[future]
+            completed_count += 1
+            
+            # Progress reporting - overwrite same line with padding to clear remnants
+            progress_msg = f"📊 Processed {completed_count}/{len(packages_to_score)} packages ({pkg})"
+            # Add moderate padding to clear remnants from longer package names
+            print(f"{progress_msg:<60}", end='\r')
+            sys.stdout.flush()
+            
+            try:
+                result = future.result()
+                if result is not None:
+                    scores.append(result)
+            except Exception as exc:
+                print(f'\n⚠️ Package {pkg} generated an exception: {exc}')
+    
+    print(f"\n✅ Completed risk assessment for {len(scores)} packages")
 
     return scores

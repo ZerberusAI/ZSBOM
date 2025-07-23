@@ -84,18 +84,16 @@ class TestPackageSpecificationParsing:
 class TestEnhancedRiskScoring:
     """Test enhanced risk scoring with full dependency analysis."""
 
-    @patch('depclass.risk._get_distribution_path')
     @patch('depclass.risk._package_cve_issues')
-    def test_score_packages_basic(self, mock_cve_issues, mock_dist_path):
+    def test_score_packages_basic(self, mock_cve_issues):
         """Test basic enhanced scoring functionality."""
         # Setup mocks
         mock_cve_issues.return_value = []
-        mock_dist_path.return_value = None
         
         # Test data
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         dependencies = {
@@ -112,13 +110,15 @@ class TestEnhancedRiskScoring:
             }
         }
         
-        installed_packages = {
-            "requests": "2.28.1",
-            "numpy": "1.21.5"
+        transitive_analysis = {
+            "resolution_details": {
+                "requests": "2.28.1",
+                "numpy": "1.21.5"
+            }
         }
         
         model = RiskModel()
-        scores = score_packages(validation_results, dependencies, installed_packages, model)
+        scores = score_packages(validation_results, dependencies, transitive_analysis, model)
         
         # Should return scores for all installed packages
         assert len(scores) == 2
@@ -133,17 +133,15 @@ class TestEnhancedRiskScoring:
         assert "dimension_details" in requests_score
         assert "declared_vs_installed" in requests_score["dimension_details"]
 
-    @patch('depclass.risk._get_distribution_path')
     @patch('depclass.risk._package_cve_issues')
-    def test_score_packages_with_conflicts(self, mock_cve_issues, mock_dist_path):
+    def test_score_packages_with_conflicts(self, mock_cve_issues):
         """Test enhanced scoring with cross-file conflicts."""
         # Setup mocks
         mock_cve_issues.return_value = []
-        mock_dist_path.return_value = None
         
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         # Create conflicting specifications
@@ -159,12 +157,14 @@ class TestEnhancedRiskScoring:
             }
         }
         
-        installed_packages = {
-            "requests": "2.28.1"
+        transitive_analysis = {
+            "resolution_details": {
+                "requests": "2.28.1"
+            }
         }
         
         model = RiskModel()
-        scores = score_packages(validation_results, dependencies, installed_packages, model)
+        scores = score_packages(validation_results, dependencies, transitive_analysis, model)
         
         # Should still process the package
         assert len(scores) == 1
@@ -177,12 +177,10 @@ class TestEnhancedRiskScoring:
         assert dvi_details["score"] < 5.0
         assert dvi_details["details"]["consistency_status"] == "major_conflicts"
 
-    @patch('depclass.risk._get_distribution_path')
     @patch('depclass.risk._package_cve_issues')
-    def test_score_packages_with_cves(self, mock_cve_issues, mock_dist_path):
+    def test_score_packages_with_cves(self, mock_cve_issues):
         """Test enhanced scoring with CVE data."""
         # Setup mocks
-        mock_dist_path.return_value = None
         
         # Mock CVE data
         def cve_side_effect(package, cve_list):
@@ -204,7 +202,7 @@ class TestEnhancedRiskScoring:
                 "severity": "HIGH",
                 "cvss_score": 8.5
             }],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         dependencies = {
@@ -216,12 +214,14 @@ class TestEnhancedRiskScoring:
             }
         }
         
-        installed_packages = {
-            "requests": "2.28.1"
+        transitive_analysis = {
+            "resolution_details": {
+                "requests": "2.28.1"
+            }
         }
         
         model = RiskModel()
-        scores = score_packages(validation_results, dependencies, installed_packages, model)
+        scores = score_packages(validation_results, dependencies, transitive_analysis, model)
         
         requests_score = scores[0]
         
@@ -234,7 +234,7 @@ class TestEnhancedRiskScoring:
         """Test enhanced scoring when no declared versions are found."""
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         # Only runtime packages, no declared versions
@@ -245,17 +245,18 @@ class TestEnhancedRiskScoring:
             }
         }
         
-        installed_packages = {
-            "requests": "2.28.1",
-            "numpy": "1.21.5"
+        transitive_analysis = {
+            "resolution_details": {
+                "requests": "2.28.1",
+                "numpy": "1.21.5"
+            }
         }
         
         model = RiskModel()
         
-        with patch('depclass.risk._get_distribution_path', return_value=None), \
-             patch('depclass.risk._package_cve_issues', return_value=[]):
+        with patch('depclass.risk._package_cve_issues', return_value=[]):
             
-            scores = score_packages(validation_results, dependencies, installed_packages, model)
+            scores = score_packages(validation_results, dependencies, transitive_analysis, model)
             
             # Should process all packages
             assert len(scores) == 2
@@ -273,7 +274,7 @@ class TestEnhancedRiskScoring:
         """Test enhanced scoring with custom risk model configuration."""
         validation_results = {
             "cve_issues": [],
-            "typosquatting_issues": []
+            "typosquatting_whitelist": []
         }
         
         dependencies = {
@@ -285,8 +286,10 @@ class TestEnhancedRiskScoring:
             }
         }
         
-        installed_packages = {
-            "requests": "2.28.1"
+        transitive_analysis = {
+            "resolution_details": {
+                "requests": "2.28.1"
+            }
         }
         
         # Custom model with different weights
@@ -300,10 +303,9 @@ class TestEnhancedRiskScoring:
             medium_risk_threshold=60.0
         )
         
-        with patch('depclass.risk._get_distribution_path', return_value=None), \
-             patch('depclass.risk._package_cve_issues', return_value=[]):
+        with patch('depclass.risk._package_cve_issues', return_value=[]):
             
-            scores = score_packages(validation_results, dependencies, installed_packages, model)
+            scores = score_packages(validation_results, dependencies, transitive_analysis, model)
             
             requests_score = scores[0]
             
