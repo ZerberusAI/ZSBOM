@@ -43,7 +43,6 @@ class WeightedRiskCalculator:
         declared_version: Optional[str] = None,
         cve_list: Optional[List[Dict[str, Any]]] = None,
         typosquatting_whitelist: Optional[List[str]] = None,
-        repo_path: Optional[str] = None,
         **kwargs: Any
     ) -> Dict[str, Any]:
         """Calculate comprehensive risk score for a package.
@@ -54,7 +53,6 @@ class WeightedRiskCalculator:
             declared_version: Version declared in requirements
             cve_list: List of CVE dictionaries
             typosquatting_whitelist: List of known safe packages
-            repo_path: Path to local git repository
             **kwargs: Additional arguments
             
         Returns:
@@ -90,10 +88,10 @@ class WeightedRiskCalculator:
         
         # Package Abandonment dimension
         dimension_scores["package_abandonment"] = self.scorers["package_abandonment"].score(
-            package, installed_version, declared_version, repo_path=repo_path, **kwargs
+            package, installed_version, declared_version, **kwargs
         )
         dimension_details["package_abandonment"] = self.scorers["package_abandonment"].get_details(
-            package, installed_version, declared_version, repo_path=repo_path, **kwargs
+            package, installed_version, declared_version, **kwargs
         )
         
         # Typosquat Heuristics dimension

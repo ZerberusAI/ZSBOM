@@ -6,10 +6,10 @@ import sqlite3
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import Levenshtein
 from .base import DimensionScorer
+from ..services import get_pypi_service
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         """
         self.cache_db_path = cache_db_path
         self.top_packages_url = "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json"
-        self.pypi_api_base = "https://pypi.org/pypi"
+        self.pypi_service = get_pypi_service()
         
         # Character substitution patterns (bidirectional)
         self.char_substitutions = {
@@ -168,16 +168,6 @@ class TyposquatHeuristicsScorer(DimensionScorer):
                 )
             ''')
             
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pypi_metadata (
-                    package_name TEXT PRIMARY KEY,
-                    metadata TEXT,
-                    download_count INTEGER,
-                    creation_date TEXT,
-                    cached_at TIMESTAMP,
-                    ttl_hours INTEGER DEFAULT 1
-                )
-            ''')
             
             conn.commit()
             conn.close()
@@ -272,107 +262,21 @@ class TyposquatHeuristicsScorer(DimensionScorer):
                         f"Check network connectivity and API availability. Using cached data if available.")
             return []
     
-    def _get_pypi_metadata(self, package_name: str) -> Optional[Dict[str, Any]]:
-        """Get package metadata from PyPI API with caching.
+    def _get_pypi_metadata(self, package_name: str, top_packages: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+        """Get package metadata using shared PyPI service.
         
         Args:
             package_name: Name of the package
+            top_packages: Optional top packages list to reuse for download counts
             
         Returns:
             Package metadata dictionary or None if failed
         """
-        try:
-            # Check cache first
-            conn = sqlite3.connect(self.cache_db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT metadata, download_count, creation_date, cached_at, ttl_hours
-                FROM pypi_metadata
-                WHERE package_name = ?
-            ''', (package_name,))
-            
-            cached_data = cursor.fetchone()
-            
-            if cached_data and self._is_cache_valid(cached_data[3], cached_data[4]):
-                conn.close()
-                return {
-                    'metadata': json.loads(cached_data[0]),
-                    'download_count': cached_data[1],
-                    'creation_date': cached_data[2]
-                }
-            
-            # Cache miss or expired, fetch from API
-            url = f"{self.pypi_api_base}/{package_name}/json"
-            response = self._make_request_with_retry(url)
-            
-            if not response:
-                # Network unavailable, use stale cached data if available
-                if cached_data:
-                    logger.warning(f"Network unavailable, using stale cached metadata for package '{package_name}'")
-                    conn.close()
-                    return {
-                        'metadata': json.loads(cached_data[0]),
-                        'download_count': cached_data[1],
-                        'creation_date': cached_data[2]
-                    }
-                else:
-                    conn.close()
-                    return None
-            
-            data = response.json()
-            
-            # Extract download count and creation date
-            download_count = 0
-            creation_date = None
-            
-            # Get download count (if available)
-            if 'info' in data and 'download_count' in data['info']:
-                download_count = data['info']['download_count'] or 0
-            
-            # Get creation date from first release
-            if 'releases' in data and data['releases']:
-                releases = data['releases']
-                # Find the earliest release
-                earliest_date = None
-                for version, release_info in releases.items():
-                    if release_info:  # Skip empty releases
-                        for release in release_info:
-                            if 'upload_time' in release:
-                                release_date = release['upload_time']
-                                if earliest_date is None or release_date < earliest_date:
-                                    earliest_date = release_date
-                
-                if earliest_date:
-                    creation_date = earliest_date
-            
-            # Cache the result
-            cursor.execute('''
-                INSERT OR REPLACE INTO pypi_metadata 
-                (package_name, metadata, download_count, creation_date, cached_at, ttl_hours)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                package_name,
-                json.dumps(data),
-                download_count,
-                creation_date,
-                datetime.now().isoformat(),
-                1  # 1 hour TTL
-            ))
-            
-            conn.commit()
-            conn.close()
-            
-            return {
-                'metadata': data,
-                'download_count': download_count,
-                'creation_date': creation_date
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch PyPI metadata for package '{package_name}' from {self.pypi_api_base}: {e}. "
-                        f"This may affect download count and creation date scoring factors. Using cached data if available.")
-            return None
+        result = self.pypi_service.get_package_metadata(package_name, ttl_hours=1, top_packages=top_packages)
+        if result and result.get('pypi_data_available'):
+            return result
+        return None
+
     
     def _make_request_with_retry(self, url: str, max_retries: int = 3) -> Optional[requests.Response]:
         """Make HTTP request with exponential backoff retry.
@@ -426,14 +330,16 @@ class TyposquatHeuristicsScorer(DimensionScorer):
                 most_similar_package = top_name
         
         # Scoring logic
-        if min_distance == float('inf') or min_distance > 5:
+        if min_distance == 0:
+            score = 3  # Exact match with popular package - SAFE (it's the actual popular package)
+        elif min_distance == float('inf') or min_distance > 5:
             score = 3  # No similarity - very different names
         elif min_distance >= 3:
             score = 2  # Distance 3-5
         elif min_distance == 2:
             score = 1  # Distance 2
         else:  # min_distance == 1
-            score = 0  # Distance 1 - high risk
+            score = 0  # Distance 1 - high risk (actual typosquatting)
         
         return score, {
             'min_distance': min_distance if min_distance != float('inf') else None,
@@ -452,21 +358,27 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         Returns:
             Tuple of (score, details)
         """
+        min_distance = string_distance_details.get('min_distance')
+        has_similarity = min_distance is not None and min_distance <= 2
+        
         if not package_metadata:
-            # If no metadata available, give neutral score rather than penalizing
-            return 1, {'download_count': None, 'reason': 'metadata_unavailable'}
+            # If no metadata available AND high similarity exists, assume high risk (0 pts)
+            # Following security-first approach per ZSBOM Risk Scoring Framework v1.0
+            if has_similarity:
+                return 0, {'download_count': None, 'reason': 'metadata_unavailable_with_similarity', 'has_similarity': True}
+            else:
+                return 1, {'download_count': None, 'reason': 'metadata_unavailable', 'has_similarity': False}
         
         download_count = package_metadata.get('download_count', 0)
-        min_distance = string_distance_details.get('min_distance')
         
         # Scoring logic
         if download_count >= self.download_thresholds['high']:
             score = 3  # High downloads
         elif download_count >= self.download_thresholds['medium']:
             score = 2  # Medium downloads
-        elif download_count >= self.download_thresholds['low'] and min_distance and min_distance <= 2:
+        elif download_count >= self.download_thresholds['low'] and has_similarity:
             score = 1  # Low downloads + similar name
-        elif download_count < self.download_thresholds['low'] and min_distance and min_distance <= 2:
+        elif download_count < self.download_thresholds['low'] and has_similarity:
             score = 0  # Very low downloads + similar name - high risk
         else:
             score = 3  # No similarity concerns
@@ -474,7 +386,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         return score, {
             'download_count': download_count,
             'threshold_category': self._get_download_category(download_count),
-            'has_similarity': min_distance is not None and min_distance <= 2
+            'has_similarity': has_similarity
         }
     
     def _get_download_category(self, download_count: int) -> str:
@@ -538,20 +450,45 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             'found_substitutions': found_substitutions
         }
     
-    def _calculate_keyboard_proximity_score(self, package_name: str) -> Tuple[int, Dict[str, Any]]:
+    def _calculate_keyboard_proximity_score(self, package_name: str, string_distance_details: Dict[str, Any] = None) -> Tuple[int, Dict[str, Any]]:
         """Calculate keyboard proximity detection score (Factor 4).
+        
+        This method detects keyboard proximity errors by being context-aware:
+        - If exact match (distance=0): Skip analysis, return max score
+        - If similar (distance 1-2): Check for keyboard proximity patterns  
+        - If very different: Skip analysis, return max score
         
         Args:
             package_name: Package name to analyze
+            string_distance_details: String distance analysis results for context
             
         Returns:
             Tuple of (score, details)
         """
+        # Get string distance context
+        min_distance = string_distance_details.get('min_distance') if string_distance_details else None
+        
+        # If exact match with popular package, no need to check for keyboard typos
+        if min_distance == 0:
+            return 1, {
+                'proximity_typos': [],
+                'typo_count': 0,
+                'reason': 'exact_match_with_popular_package'
+            }
+        
+        # If very different name, no similarity concerns
+        if min_distance is None or min_distance > 2:
+            return 1, {
+                'proximity_typos': [],
+                'typo_count': 0,
+                'reason': 'no_similarity_to_popular_packages'
+            }
+        
+        # Only analyze keyboard proximity for packages similar to popular ones (distance 1-2)
         proximity_typos = []
         package_lower = package_name.lower()
         
-        # Check for actual keyboard proximity errors using the proximity map
-        # We look for adjacent characters that might be accidental key presses
+        # Method 1: Check for adjacent characters that form suspicious patterns
         for i in range(len(package_lower) - 1):
             char1 = package_lower[i]
             char2 = package_lower[i + 1]
@@ -560,17 +497,34 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             # form a suspicious pattern (less common letter combinations)
             if char1 in self.qwerty_proximity and char2 in self.qwerty_proximity[char1]:
                 # Define suspicious adjacent combinations that are likely typos
+                # Includes all adjacent key pairs that represent common typing mistakes
                 suspicious_adjacent = {
-                    'qw', 'wq', 'er', 'rt', 'ty', 'ui', 'op', 'po', 'oi', 'io',
-                    'as', 'sa', 'sd', 'ds', 'df', 'fd', 'fg', 'gf', 'gh', 'hg',
-                    'hj', 'jh', 'jk', 'kj', 'kl', 'lk', 'zx', 'xz', 'xc', 'cx',
-                    'cv', 'vc', 'vb', 'bv', 'bn', 'nb', 'nm', 'mn'
+                    'qw', 'wq', 'we', 'ew', 'er', 're', 'rt', 'tr', 'ty', 'yt', 'yu', 'uy', 'ui', 'iu', 'io', 'oi', 'op', 'po',
+                    'as', 'sa', 'sd', 'ds', 'df', 'fd', 'fg', 'gf', 'gh', 'hg', 'hj', 'jh', 'jk', 'kj', 'kl', 'lk',
+                    'zx', 'xz', 'xc', 'cx', 'cv', 'vc', 'vb', 'bv', 'bn', 'nb', 'nm', 'mn',
+                    # Additional common adjacent key errors
+                    'aw', 'wa', 'sw', 'ws', 'de', 'ed', 'fr', 'rf', 'gt', 'tg', 'hy', 'yh', 'ju', 'uj', 'ki', 'ik', 'lo', 'ol',
+                    'az', 'za', 'sx', 'xs', 'dc', 'cd', 'fv', 'vf', 'gb', 'bg', 'hn', 'nh', 'jm', 'mj'
                 }
                 
                 char_pair = char1 + char2
                 if char_pair in suspicious_adjacent:
-                    proximity_typos.append(f"{char_pair} (positions {i}-{i+1})")
+                    proximity_typos.append(f"{char_pair} (adjacent keys at positions {i}-{i+1})")
         
+        # Method 2: Check for single character differences that might be keyboard proximity errors
+        # This is particularly important for packages like "requestd" vs "requests" (s→d)
+        # We'll analyze character patterns that could indicate proximity substitutions
+        suspicious_endings = ['d', 'f', 'g']  # Common typos for 's' ending
+        suspicious_beginnings = ['q', 'e', 'a']  # Common typos for 'w' beginning
+        
+        if package_lower.endswith('d') and not package_lower.endswith('ed'):
+            # Check if this could be 's' → 'd' substitution
+            proximity_typos.append("potential s→d substitution (keyboard proximity)")
+        
+        if package_lower.endswith('f') and not package_lower.endswith('if'):
+            # Check if this could be 's' → 'f' substitution  
+            proximity_typos.append("potential s→f substitution (keyboard proximity)")
+            
         # Scoring logic
         if len(proximity_typos) == 0:
             score = 1  # No proximity typos
@@ -593,11 +547,18 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         Returns:
             Tuple of (score, details)
         """
+        min_distance = string_distance_details.get('min_distance')
+        has_similarity = min_distance is not None and min_distance <= self.similarity_threshold
+        
         if not package_metadata or not package_metadata.get('creation_date'):
-            return 1, {'creation_date': None, 'reason': 'date_unavailable'}
+            # If no creation date available AND high similarity exists, assume high risk (0 pts)
+            # Following security-first approach per ZSBOM Risk Scoring Framework v1.0
+            if has_similarity:
+                return 0, {'creation_date': None, 'reason': 'date_unavailable_with_similarity', 'has_similarity': True}
+            else:
+                return 1, {'creation_date': None, 'reason': 'date_unavailable', 'has_similarity': False}
         
         creation_date_str = package_metadata['creation_date']
-        min_distance = string_distance_details.get('min_distance')
         
         try:
             # Parse creation date
@@ -607,7 +568,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             # Scoring logic
             if days_since_creation > self.new_package_days:
                 score = 1  # Old package
-            elif min_distance is None or min_distance > self.similarity_threshold:
+            elif not has_similarity:
                 score = 1  # New package + dissimilar
             else:
                 score = 0  # New package + similar - high risk
@@ -616,13 +577,17 @@ class TyposquatHeuristicsScorer(DimensionScorer):
                 'creation_date': creation_date_str,
                 'days_since_creation': days_since_creation,
                 'is_new_package': days_since_creation <= self.new_package_days,
-                'has_similarity': min_distance is not None and min_distance <= self.similarity_threshold
+                'has_similarity': has_similarity
             }
             
         except Exception as e:
             logger.error(f"Failed to parse creation date '{creation_date_str}' for package '{package_name}': {e}. "
                         f"Expected ISO 8601 format. This affects Factor 5 scoring (creation date analysis).")
-            return 1, {'creation_date': creation_date_str, 'reason': 'date_parse_error'}
+            # On parse error with similarity, be conservative (0 pts)
+            if has_similarity:
+                return 0, {'creation_date': creation_date_str, 'reason': 'date_parse_error_with_similarity', 'has_similarity': True}
+            else:
+                return 1, {'creation_date': creation_date_str, 'reason': 'date_parse_error', 'has_similarity': False}
     
     def score(
         self,
@@ -666,15 +631,11 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             return 10.0
         
         try:
-            # Use parallel processing for API calls to improve performance
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                # Submit both API calls concurrently
-                top_packages_future = executor.submit(self._get_top_packages)
-                metadata_future = executor.submit(self._get_pypi_metadata, package)
-                
-                # Collect results
-                top_packages = top_packages_future.result()
-                package_metadata = metadata_future.result()
+            # Get top packages first, then use them for metadata lookup
+            top_packages = self._get_top_packages()
+            
+            # Get package metadata with top packages data for download count reuse
+            package_metadata = self._get_pypi_metadata(package, top_packages)
             
             # Check for API failures
             if not top_packages and not package_metadata:
@@ -685,7 +646,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             factor1_score, factor1_details = self._calculate_string_distance_score(package, top_packages)
             factor2_score, factor2_details = self._calculate_downloads_similarity_score(package, package_metadata, factor1_details)
             factor3_score, factor3_details = self._calculate_character_substitution_score(package)
-            factor4_score, factor4_details = self._calculate_keyboard_proximity_score(package)
+            factor4_score, factor4_details = self._calculate_keyboard_proximity_score(package, factor1_details)
             factor5_score, factor5_details = self._calculate_creation_date_score(package, package_metadata, factor1_details)
             
             # Calculate total score
@@ -738,21 +699,17 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             }
         
         try:
-            # Use parallel processing for API calls to improve performance
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                # Submit both API calls concurrently
-                top_packages_future = executor.submit(self._get_top_packages)
-                metadata_future = executor.submit(self._get_pypi_metadata, package)
-                
-                # Collect results
-                top_packages = top_packages_future.result()
-                package_metadata = metadata_future.result()
+            # Get top packages first, then use them for metadata lookup
+            top_packages = self._get_top_packages()
+            
+            # Get package metadata with top packages data for download count reuse
+            package_metadata = self._get_pypi_metadata(package, top_packages)
             
             # Calculate all factors with details
             factor1_score, factor1_details = self._calculate_string_distance_score(package, top_packages)
             factor2_score, factor2_details = self._calculate_downloads_similarity_score(package, package_metadata, factor1_details)
             factor3_score, factor3_details = self._calculate_character_substitution_score(package)
-            factor4_score, factor4_details = self._calculate_keyboard_proximity_score(package)
+            factor4_score, factor4_details = self._calculate_keyboard_proximity_score(package, factor1_details)
             factor5_score, factor5_details = self._calculate_creation_date_score(package, package_metadata, factor1_details)
             
             # Identify risk indicators

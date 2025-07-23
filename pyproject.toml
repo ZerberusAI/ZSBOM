@@ -13,7 +13,8 @@ dependencies = [
     "PyYAML==6.0.2",
     "packaging>=21.0",
     "tomli>=1.2.0; python_version < '3.11'",
-    "python-Levenshtein==0.27.1"
+    "python-Levenshtein==0.27.1",
+    "pip-tools==7.4.1"
 ]
 
 [project.optional-dependencies]

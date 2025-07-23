@@ -52,19 +52,26 @@ class DeclaredVsInstalledScorer(DimensionScorer):
         # Get additional data from kwargs
         dependency_files = kwargs.get('dependency_files', {})
         package_specs = kwargs.get('package_specs', {})
+        dependency_tree = kwargs.get('dependency_tree', {})
+        classification = kwargs.get('classification', {})
         
-        # If no additional data, use simple declared_version
+        # Resolve effective declared version for transitive dependencies
+        effective_declared_version = self._resolve_effective_declared_version(
+            package, declared_version, dependency_tree, classification
+        )
+        
+        # If no additional data, use effective declared_version
         if not dependency_files and not package_specs:
-            package_specs = {package: {"declared": declared_version}} if declared_version else {}
+            package_specs = {package: {"declared": effective_declared_version}} if effective_declared_version else {}
         
         # Factor 1: Version Match Precision (4 points)
         precision_score = self._calculate_version_match_precision(
-            package, installed_version, declared_version, package_specs
+            package, installed_version, effective_declared_version, package_specs
         )
         
         # Factor 2: Specification Completeness (3 points)
         completeness_score = self._calculate_specification_completeness(
-            package, declared_version, package_specs
+            package, effective_declared_version, package_specs
         )
         
         # Factor 3: Cross-File Consistency (3 points)
@@ -98,17 +105,24 @@ class DeclaredVsInstalledScorer(DimensionScorer):
         # Get additional data from kwargs
         dependency_files = kwargs.get('dependency_files', {})
         package_specs = kwargs.get('package_specs', {})
+        dependency_tree = kwargs.get('dependency_tree', {})
+        classification = kwargs.get('classification', {})
         
-        # If no additional data, use simple declared_version
+        # Resolve effective declared version for transitive dependencies
+        effective_declared_version = self._resolve_effective_declared_version(
+            package, declared_version, dependency_tree, classification
+        )
+        
+        # If no additional data, use effective declared_version
         if not dependency_files and not package_specs:
-            package_specs = {package: {"declared": declared_version}} if declared_version else {}
+            package_specs = {package: {"declared": effective_declared_version}} if effective_declared_version else {}
         
         # Calculate individual factor scores
         precision_score = self._calculate_version_match_precision(
-            package, installed_version, declared_version, package_specs
+            package, installed_version, effective_declared_version, package_specs
         )
         completeness_score = self._calculate_specification_completeness(
-            package, declared_version, package_specs
+            package, effective_declared_version, package_specs
         )
         consistency_score = self._calculate_cross_file_consistency(
             package, package_specs
@@ -117,10 +131,10 @@ class DeclaredVsInstalledScorer(DimensionScorer):
         total_score = precision_score + completeness_score + consistency_score
         
         # Get match status
-        match_status = self._get_match_status(installed_version, declared_version)
+        match_status = self._get_match_status(installed_version, effective_declared_version)
         
         # Get specification quality
-        spec_quality = self._get_specification_quality(declared_version)
+        spec_quality = self._get_specification_quality(effective_declared_version)
         
         # Get consistency status
         consistency_status = self._get_consistency_status(package, package_specs)
@@ -138,7 +152,7 @@ class DeclaredVsInstalledScorer(DimensionScorer):
             },
             "package_details": {
                 "package": package,
-                "declared_version": declared_version,
+                "declared_version": effective_declared_version,
                 "installed_version": installed_version,
                 "match_status": match_status,
                 "files_found": files_found
@@ -457,3 +471,89 @@ class DeclaredVsInstalledScorer(DimensionScorer):
         else:
             # Standard constraint
             return spec
+    
+    def _resolve_effective_declared_version(
+        self, 
+        package: str, 
+        declared_version: Optional[str], 
+        dependency_tree: Dict[str, List[str]], 
+        classification: Dict[str, str]
+    ) -> Optional[str]:
+        """Resolve effective declared version for transitive dependencies.
+        
+        For transitive dependencies, attempts to derive the effective version constraint
+        from their parent dependencies' requirements.
+        
+        Args:
+            package: Package name
+            declared_version: Original declared version (None for transitive deps)
+            dependency_tree: Maps package -> list of parent packages
+            classification: Maps package -> "direct" or "transitive"
+            
+        Returns:
+            Effective declared version or None if not resolvable
+        """
+        # If already has a declared version, use it (direct dependency)
+        if declared_version is not None:
+            return declared_version
+        
+        # Check if this is a transitive dependency
+        package_type = classification.get(package, "unknown")
+        if package_type != "transitive":
+            return declared_version
+        
+        # Get parent packages for this transitive dependency
+        parents = dependency_tree.get(package, [])
+        if not parents:
+            return declared_version
+        
+        # Try to resolve constraint from each parent
+        effective_constraints = []
+        
+        for parent in parents:
+            constraint = self._get_parent_constraint(parent, package)
+            if constraint:
+                effective_constraints.append(constraint)
+        
+        # If we found constraints, use the first one (could be enhanced to merge multiple)
+        if effective_constraints:
+            return effective_constraints[0]
+        
+        return declared_version
+    
+    def _get_parent_constraint(self, parent_package: str, child_package: str) -> Optional[str]:
+        """Get the version constraint that parent_package places on child_package.
+        
+        Args:
+            parent_package: Name of the parent package
+            child_package: Name of the child package
+            
+        Returns:
+            Version constraint string or None if not found
+        """
+        try:
+            import importlib.metadata
+            
+            # Get metadata for the parent package
+            dist = importlib.metadata.distribution(parent_package)
+            
+            # Look through its requirements for the child package
+            if dist.requires:
+                for req_str in dist.requires:
+                    try:
+                        from packaging.requirements import Requirement
+                        req = Requirement(req_str)
+                        
+                        # Check if this requirement is for our child package
+                        if req.name.lower() == child_package.lower():
+                            # Return the specifier as a string
+                            return str(req.specifier) if req.specifier else ""
+                    except Exception:
+                        # Skip malformed requirements
+                        continue
+        
+        except Exception:
+            # Package not found or other error - return None
+            pass
+        
+        return None
