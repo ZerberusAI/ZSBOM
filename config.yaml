@@ -7,7 +7,7 @@ validation_rules:
 
 # Transitive dependency analysis configuration
 transitive_analysis:
-  pip_compile_timeout: 60  # seconds
+  pip_compile_timeout: 120  # seconds
   cache_ttl_hours: 24  # hours to cache pip-compile results
   include_in_validation: true  # Include transitive dependencies in security validation
   include_in_risk_scoring: true  # Include transitive dependencies in risk scoring
@@ -17,8 +17,8 @@ transitive_analysis:
 # Private repository configuration
 private_repositories:
   index_url: ""  # Primary index (--index-url), empty means use PyPI
-  extra_index_urls: ["http://admin:admin123@localhost:8008/simple"]  # Additional indexes (--extra-index-url)
-  trusted_hosts: ["localhost"]  # For self-signed certs (--trusted-host)
+  extra_index_urls: []  # Additional indexes (--extra-index-url)
+  trusted_hosts: []  # For self-signed certs (--trusted-host)
   find_links: []  # Additional package locations (--find-links)
   no_index: false  # Disable PyPI entirely (--no-index)
 
@@ -126,5 +126,6 @@ caching:
 notifications:
   gchat:
     enabled: false
-    webhook_url: "https://chat.googleapis.com/v1/spaces/AAAAdzD-Yps/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=goTzQWpHvNVc8t7XnpCrDBr9LgTWTa7Im0VtIkVUqaA"  # Add your Google Chat webhook URL here
+    # Example Webhook_url: "https://chat.googleapis.com/v1/spaces/AAAAdzD-Yps/messages?key=*&token=*"
+    webhook_url: ""  # Add your Google Chat webhook URL here
     notification_level: "critical"  # Options: all, critical, none

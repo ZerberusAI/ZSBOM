@@ -6,7 +6,7 @@ authors = [{ name = "Zerberus", email = "opensource@zerberus.co.uk" }]
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "cyclonedx-python-lib>=9.1.0",
+    "cyclonedx-python-lib[json-validation]==11.0.0",
     "requests==2.32.4",
     "safety==3.3.1",
     "importlib-metadata; python_version < '3.8'",
