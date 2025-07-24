@@ -410,7 +410,7 @@ class DependencyFileParser:
     
     def _build_pip_compile_args(self, config: Dict) -> List[str]:
         """Build pip-compile arguments with private repository support."""
-        args = ["pip-compile", "--dry-run", "--quiet", "--strip-extras"]
+        args = ["pip-compile", "--dry-run", "--quiet", "--strip-extras", "--no-build-isolation"]
         
         # Add private repository configuration
         repo_config = config.get("private_repositories", {})

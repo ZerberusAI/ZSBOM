@@ -347,7 +347,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             'similarity_found': min_distance != float('inf')
         }
     
-    def _calculate_downloads_similarity_score(self, package_name: str, package_metadata: Optional[Dict[str, Any]], string_distance_details: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    def _calculate_downloads_similarity_score(self, package_name: str, package_metadata: Optional[Dict[str, Any]], top_packages, string_distance_details: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
         """Calculate downloads + similarity analysis score (Factor 2).
         
         Args:
@@ -370,7 +370,12 @@ class TyposquatHeuristicsScorer(DimensionScorer):
                 return 1, {'download_count': None, 'reason': 'metadata_unavailable', 'has_similarity': False}
         
         download_count = package_metadata.get('download_count', 0)
-        
+        if download_count == 0:
+            for top_package in top_packages:
+                top_name = top_package['project'].lower()
+                if package_name == top_name:
+                    download_count = top_package.get('download_count', 0)
+
         # Scoring logic
         if download_count >= self.download_thresholds['high']:
             score = 3  # High downloads
@@ -644,7 +649,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             
             # Calculate all factors
             factor1_score, factor1_details = self._calculate_string_distance_score(package, top_packages)
-            factor2_score, factor2_details = self._calculate_downloads_similarity_score(package, package_metadata, factor1_details)
+            factor2_score, factor2_details = self._calculate_downloads_similarity_score(package, package_metadata, top_packages, factor1_details)
             factor3_score, factor3_details = self._calculate_character_substitution_score(package)
             factor4_score, factor4_details = self._calculate_keyboard_proximity_score(package, factor1_details)
             factor5_score, factor5_details = self._calculate_creation_date_score(package, package_metadata, factor1_details)
@@ -707,7 +712,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             
             # Calculate all factors with details
             factor1_score, factor1_details = self._calculate_string_distance_score(package, top_packages)
-            factor2_score, factor2_details = self._calculate_downloads_similarity_score(package, package_metadata, factor1_details)
+            factor2_score, factor2_details = self._calculate_downloads_similarity_score(package, package_metadata, top_packages, factor1_details)
             factor3_score, factor3_details = self._calculate_character_substitution_score(package)
             factor4_score, factor4_details = self._calculate_keyboard_proximity_score(package, factor1_details)
             factor5_score, factor5_details = self._calculate_creation_date_score(package, package_metadata, factor1_details)
