@@ -126,6 +126,6 @@ caching:
 notifications:
   gchat:
     enabled: false
-    # Example Webhook_url: "https://chat.googleapis.com/v1/spaces/AAAAdzD-Yps/messages?key=AIzaSyDdI9hCZtE6vySjMg-WEfRq3CPzaKqqsHI&token=goTpQWpHvNVS8t7XnpCrDCr9LgTWTa7Im0VtItVUqaA"
+    # Example Webhook_url: "https://chat.googleapis.com/v1/spaces/AAAAdzD-Yps/messages?key=*&token=*"
     webhook_url: ""  # Add your Google Chat webhook URL here
     notification_level: "critical"  # Options: all, critical, none
