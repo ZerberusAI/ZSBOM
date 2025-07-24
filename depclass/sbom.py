@@ -1,8 +1,10 @@
 #REvised Location Updated as Per CycloneDX @ https://cyclonedx-python-library.readthedocs.io/en/stable/autoapi/cyclonedx/model/bom/ 
 import json
 import os
+import sys
 
 from cyclonedx.model.bom import Bom
+from cyclonedx.builder.this import this_component as cdx_lib_component
 from cyclonedx.model.component import Component, ComponentType
 from cyclonedx.model.vulnerability import (BomTarget, Vulnerability,
                                            VulnerabilityRating,
@@ -12,7 +14,11 @@ from cyclonedx.model.vulnerability import (BomTarget, Vulnerability,
                                            VulnerabilitySource,
                                            BomTargetVersionRange,
                                            ImpactAnalysisAffectedStatus)
-from cyclonedx.output.json import JsonV1Dot5
+from cyclonedx.output.json import JsonV1Dot6
+from cyclonedx.validation.json import JsonStrictValidator
+from cyclonedx.schema import SchemaVersion
+from cyclonedx.exception import MissingOptionalDependencyException
+from packageurl import PackageURL
 
 SEVERITY_MAP = {
     "critical": VulnerabilitySeverity.CRITICAL,
@@ -27,11 +33,17 @@ SEVERITY_MAP = {
 
 def generate_sbom(dependencies: dict, cve_data: dict, config: dict):
     bom = Bom()
+    bom.metadata.tools.components.add(cdx_lib_component())
     component_map = {}
 
     # Add components to BOM
     for dep, ver in dependencies.items():
-        component = Component(name=dep, version=ver, type=ComponentType.LIBRARY)
+        component = Component(
+            name=dep,
+            version=ver,
+            type=ComponentType.LIBRARY,
+            purl=PackageURL(type="pypi", name=dep, version=ver)
+        )
         bom.components.add(component)
         component_map[f"{dep.lower()}=={ver}"] = component
 
@@ -39,12 +51,24 @@ def generate_sbom(dependencies: dict, cve_data: dict, config: dict):
     process_cve_data(cve_data, component_map, bom)
 
     # Export SBOM as JSON
-    outputter = JsonV1Dot5(bom=bom)
+    sbom = JsonV1Dot6(bom=bom)
+    validate_json_format(sbom)
     output_path = os.path.abspath(config["output"]["sbom_file"])
     with open(output_path, "w") as f:
-        f.write(outputter.output_as_string())
+        f.write(sbom.output_as_string())
     
     print(f"SBOM report exported to: {output_path}")
+
+def validate_json_format(sbom):
+    serialized_json = sbom.output_as_string(indent=2)
+    my_json_validator = JsonStrictValidator(SchemaVersion.V1_6)
+    try:
+        json_validation_errors = my_json_validator.validate_str(serialized_json)
+        if json_validation_errors:
+            print('JSON invalid', 'ValidationError:', repr(json_validation_errors), sep='\n', file=sys.stderr)
+            sys.exit(2)
+    except MissingOptionalDependencyException as error:
+        print('JSON-validation was skipped due to', error)
 
 
 def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
