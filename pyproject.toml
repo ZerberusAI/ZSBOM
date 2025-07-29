@@ -32,10 +32,12 @@ dependencies = [
     "requests==2.32.4",
     "safety==3.6.0",
     "PyYAML==6.0.2",
-    "packaging==25.0",
+    "packaging<26.0,>=23.2",
     "tomli==2.2.1; python_version < '3.11'",
     "python-Levenshtein==0.27.1",
-    "pip-tools==7.4.1"
+    "pip-tools==7.4.1",
+    "typer==0.16.0",
+    "rich==14.1.0"
 ]
 
 [project.optional-dependencies]
@@ -67,4 +69,4 @@ Documentation = "https://github.com/ZerberusAI/ZSBOM#readme"
 Changelog = "https://github.com/ZerberusAI/ZSBOM/blob/main/CHANGELOG.md"
 
 [project.scripts]
-zsbom = "depclass.cli:main"
+zsbom = "depclass.cli:app"

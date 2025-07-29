@@ -1,53 +1,55 @@
-import argparse
 import json
+import os
+import sys
+from typing import Optional
+
+import typer
 import yaml
-from depclass.validate import validate
-from depclass.sbom import read_json_file, generate_sbom
+from depclass.rich_utils.ui_helpers import get_console
+
+from depclass.db.vulnerability import VulnerabilityCache
 from depclass.extract import extract_dependencies
 from depclass.risk import score_packages
 from depclass.risk_model import load_model
+from depclass.sbom import generate_sbom, read_json_file
+from depclass.validate import validate
 
-def load_config(path):
+# Initialize Typer app
+app = typer.Typer(help="ZSBOM - Zerberus SBOM Automation Framework")
+
+def load_config(path: str) -> dict:
+    """Load configuration from YAML file."""
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
-def merge_config_and_args(config, args):
-    # Override config values with CLI args if provided
-    if args.output is not None:
-        config["output"]["sbom_file"] = args.output
+def merge_config_and_args(config: dict, output: Optional[str], ignore_conflicts: bool) -> dict:
+    """Merge configuration with CLI arguments."""
+    if output is not None:
+        config["output"]["sbom_file"] = output
     
-    # Add ignore_conflicts flag to config for dependency analysis
-    config["ignore_conflicts"] = getattr(args, "ignore_conflicts", False)
+    config["ignore_conflicts"] = ignore_conflicts
     
     return config
 
-def main():
-    parser = argparse.ArgumentParser(description="Simple scanning tool")
-    parser.add_argument("-c", "--config", default="config.yaml", help="Path to config YAML")
-    parser.add_argument("-o", "--output", help="Output file override")
-    parser.add_argument("-sb", "--skip-sbom", help="Skip the SBOM report generation", default=False)
+@app.command()
+def main(
+    config_path: str = typer.Option("config.yaml", "-c", "--config", help="Path to config YAML"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="Output file override"),
+    skip_sbom: bool = typer.Option(False, "-sb", "--skip-sbom", help="Skip the SBOM report generation"),
+    ignore_conflicts: bool = typer.Option(False, "--ignore-conflicts", help="Continue analysis even when dependency conflicts are detected")
+):
+    """Run ZSBOM security analysis and generate Software Bill of Materials."""
+
+    # Load and merge configuration
+    config = load_config(config_path)
+    config = merge_config_and_args(config, output, ignore_conflicts)
     
-    # Transitive dependency analysis flags
-    parser.add_argument("--ignore-conflicts", action="store_true", 
-                        help="Continue analysis even when dependency conflicts are detected")
-
-    args = parser.parse_args()
-
-    config = load_config(args.config)
-    config = merge_config_and_args(config, args)
-
-    print("=" * 50)
-    print("        🔒 ZSBOM Scanner - Powered by Zerberus")
-    print("=" * 50 + "\n")
-
-
-    print(f"Running scan with config: {args.config}")
+    # Detect environment and setup console
+    console = get_console()
 
     # Initialize cache if enabled
     cache = None
     if config['caching']['enabled']:
-        from depclass.db.vulnerability import VulnerabilityCache
-        import os
         os.makedirs(os.path.dirname(config['caching']['path']), exist_ok=True)
         cache = VulnerabilityCache(config['caching']['path'])
 
@@ -57,7 +59,15 @@ def main():
     # Extract the dependencies dict from the new transitive analysis format
     dependency_data = dependencies.get("dependencies", dependencies)
     transitive_data = dependencies.get("transitive_analysis", {})
-    
+
+    # Calculate dependency counts
+    classification = transitive_data.get("classification", {})
+            
+    direct_count = sum(1 for dep_type in classification.values() if dep_type == "direct")
+    transitive_count = sum(1 for dep_type in classification.values() if dep_type == "transitive")
+    print(f"{direct_count} direct dependencies")
+    print(f"{transitive_count} transitive dependencies")
+
     # Pass transitive analysis to validation for comprehensive security checking
     results = validate(config, cache, transitive_data)
     
@@ -123,7 +133,7 @@ def main():
             json.dump(dependencies["transitive_analysis"], fp, indent=4)
         print(f"📊 Transitive analysis results saved to {transitive_output_file}")
 
-    if not args.skip_sbom:
+    if not skip_sbom:
         cve_data = read_json_file("validation_report.json")
         if cve_data:
             # Use resolution details from transitive analysis for complete dependency coverage
@@ -131,4 +141,4 @@ def main():
             generate_sbom(sbom_dependencies, cve_data, config)
 
 if __name__ == "__main__":
-    main()
+    app()
