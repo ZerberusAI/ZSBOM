@@ -1,5 +1,6 @@
 [project]
 name = "zsbom"
+summary = "Lightweight, metadata-driven SBOM analysis and compliance framework"
 version = "0.1.0"
 description = "Zerberus SBOM Automation Framework"
 authors = [{ name = "Zerberus", email = "opensource@zerberus.ai" }]
@@ -8,7 +9,7 @@ readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8"
 keywords = [
     "sbom", "security", "vulnerability", "dependencies", "compliance",
-    "cyclonedx", "software-bill-of-materials", "supply-chain", "risk-assessment"
+    "cyclonedx", "software-bill-of-materials", "supply-chain", "risk-assessment", "dependency-scanning", "devsecops", "sbom-generator", "supply-chain-security", "open-source-security"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -25,6 +26,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Build Tools",
     "Topic :: System :: Systems Administration",
     "Topic :: Utilities"
 ]
@@ -55,6 +58,12 @@ test = [
     "pytest-cov==6.2.1",
     "pytest-mock==3.14.1"
 ]
+[project.optional-dependencies]
+docs = [
+  "mkdocs==1.5.3",
+  "mkdocs-material==9.4.8"
+]
+
 
 [build-system]
 requires = ["setuptools>=61.0"]
