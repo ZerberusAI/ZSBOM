@@ -49,6 +49,10 @@ import yaml
 import json
 import importlib.metadata  # Replaces deprecated pkg_resources
 import logging
+import time
+from rich.console import Console
+from rich.spinner import Spinner
+from rich.live import Live
 
 from .notification.gchat import GChatNotifier
 from .db.vulnerability import VulnerabilityCache
@@ -121,6 +125,21 @@ def check_cve(config, dependencies, cache):
 
     return result
 
+def _fetch_weakness_with_spinner(cwe_instance, cwe_source_name: str):
+    """Wrapper that adds Rich spinner to CWE database download."""
+    console = Console()
+    with Live(Spinner("dots", text=f"[bold yellow]Downloading {cwe_source_name} database...[/bold yellow]"), 
+              console=console, refresh_per_second=4) as live:
+        try:
+            result = cwe_instance.fetch_weakness()
+            live.update("[bold green]✔ Download completed[/bold green]")
+            time.sleep(0.5)  # Brief pause to show completion
+            return result
+        except Exception as e:
+            live.update("[bold red]✗ Download failed[/bold red]")
+            time.sleep(0.5)
+            raise
+
 def check_cwe(config, cache):
     result = []
     cwe_sources = {
@@ -134,11 +153,11 @@ def check_cwe(config, cache):
                 cwe = cwe_sources[cwe_source](config, cache)
                 # TODO
                 # Append result and consolidation
-                result = cwe.fetch_weakness()
+                result = _fetch_weakness_with_spinner(cwe, cwe_source.replace('_', ' ').title())
             except Exception as e:
                 logging.warning(f"⚠️ MITRE fetch failed, falling back to NIST: {e}")
                 cwe = cwe_sources['nvd_weaknesses'](config, cache)
-                result = cwe.fetch_weakness()
+                result = _fetch_weakness_with_spinner(cwe, "NVD Weaknesses")
 
     return result
 

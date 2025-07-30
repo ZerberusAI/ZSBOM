@@ -34,6 +34,9 @@ except ImportError:
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
+from rich.console import Console
+from rich.spinner import Spinner
+from rich.live import Live
 
 
 class DependencyFileParser:
@@ -321,7 +324,7 @@ class DependencyFileParser:
                 return {"dependencies": dependencies, "transitive_analysis": transitive_analysis}
             
             # Run pip-compile to resolve transitive dependencies
-            resolved_output = self._run_pip_compile_with_cache(consolidated_requirements, config, cache)
+            resolved_output = self._run_pip_compile_with_spinner(consolidated_requirements, config, cache)
             
             # Parse the dependency tree and classification
             tree_data = self._parse_dependency_tree(resolved_output, dependencies, config)
@@ -432,6 +435,21 @@ class DependencyFileParser:
         
         return args
     
+    def _run_pip_compile_with_spinner(self, requirements_content: str, config: Dict, cache=None) -> str:
+        """Wrapper that adds Rich spinner to pip-compile execution."""
+        console = Console()
+        with Live(Spinner("dots", text="[bold] Resolving transitive dependencies[/bold]"), 
+                  console=console, refresh_per_second=4) as live:
+            try:
+                result = self._run_pip_compile_with_cache(requirements_content, config, cache)
+                live.update("[bold][green]✔[/green] Resolved transitive dependencies[/bold]")
+                time.sleep(0.5)  # Brief pause to show completion
+                return result
+            except Exception as e:
+                live.update("[bold red]✗ Failed to resolve dependencies[/bold red]")
+                time.sleep(0.5)
+                raise
+    
     def _run_pip_compile_with_cache(self, requirements_content: str, config: Dict, cache=None) -> str:
         """Run pip-compile with SQLite caching and retry logic."""
         cache_key = self._get_cache_key(requirements_content, config)
@@ -461,8 +479,6 @@ class DependencyFileParser:
             
             # Get timeout from config
             timeout = config.get("transitive_analysis", {}).get("pip_compile_timeout", 60)
-            
-            print(f"🔍 Resolving transitive dependencies...")
             
             # Run pip-compile with retry logic
             for attempt in range(3):
