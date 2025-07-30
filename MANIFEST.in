@@ -1,0 +1,30 @@
+# Include the license
+include LICENSE
+
+# Include configuration files
+include config.yaml
+
+# Include documentation
+include README.md
+include CLAUDE.md
+include *.md
+
+# Include examples
+recursive-include examples *.json
+
+# Include test files (for source distributions)
+recursive-include tests *.py
+
+# Exclude build artifacts and temporary files
+exclude build/
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * *.egg-info
+exclude venv/
+exclude .git/
+exclude *.egg-info/
+exclude syft_sbom.json
+exclude sbom.json
+exclude risk_report.json
+exclude transitive_analysis.json
+exclude SQLite.sql

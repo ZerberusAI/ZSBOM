@@ -1,30 +1,80 @@
 [project]
 name = "zsbom"
+summary = "Lightweight, metadata-driven SBOM analysis and compliance framework"
 version = "0.1.0"
 description = "Zerberus SBOM Automation Framework"
-authors = [{ name = "Zerberus", email = "opensource@zerberus.co.uk" }]
-readme = "README.md"
+authors = [{ name = "Zerberus", email = "opensource@zerberus.ai" }]
+license = { text = "MIT" }
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8"
+keywords = [
+    "sbom", "security", "vulnerability", "dependencies", "compliance",
+    "cyclonedx", "software-bill-of-materials", "supply-chain", "risk-assessment", "dependency-scanning", "devsecops", "sbom-generator", "supply-chain-security", "open-source-security"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities"
+]
 dependencies = [
     "cyclonedx-python-lib[json-validation]==11.0.0",
     "requests==2.32.4",
-    "safety==3.3.1",
-    "importlib-metadata; python_version < '3.8'",
+    "safety==3.6.0",
     "PyYAML==6.0.2",
-    "packaging>=21.0",
-    "tomli>=1.2.0; python_version < '3.11'",
+    "packaging==25.0",
+    "tomli==2.2.1; python_version < '3.11'",
     "python-Levenshtein==0.27.1",
     "pip-tools==7.4.1"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest"
+    "pytest==8.4.1",
+    "pytest-cov==6.2.1",
+    "pytest-mock==3.14.1",
+    "black==25.1.0",
+    "ruff==0.12.5",
+    "mypy==1.17.0",
+    "types-PyYAML==6.0.12.20250516",
+    "types-requests==2.32.4.20250611"
 ]
+test = [
+    "pytest==8.4.1",
+    "pytest-cov==6.2.1",
+    "pytest-mock==3.14.1"
+]
+[project.optional-dependencies]
+docs = [
+  "mkdocs==1.5.3",
+  "mkdocs-material==9.4.8"
+]
+
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[project.urls]
+Homepage = "https://github.com/ZerberusAI/ZSBOM"
+Repository = "https://github.com/ZerberusAI/ZSBOM"
+"Bug Tracker" = "https://github.com/ZerberusAI/ZSBOM/issues"
+Documentation = "https://github.com/ZerberusAI/ZSBOM#readme"
+Changelog = "https://github.com/ZerberusAI/ZSBOM/blob/main/CHANGELOG.md"
 
 [project.scripts]
 zsbom = "depclass.cli:main"
