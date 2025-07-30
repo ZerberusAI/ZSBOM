@@ -1,6 +1,5 @@
 [project]
 name = "zsbom"
-summary = "Lightweight, metadata-driven SBOM analysis and compliance framework"
 version = "0.1.0"
 description = "Zerberus SBOM Automation Framework"
 authors = [{ name = "Zerberus", email = "opensource@zerberus.ai" }]
@@ -53,19 +52,15 @@ dev = [
     "ruff==0.12.5",
     "mypy==1.17.0",
     "types-PyYAML==6.0.12.20250516",
-    "types-requests==2.32.4.20250611"
+    "types-requests==2.32.4.20250611",
+    "mkdocs==1.5.3",
+    "mkdocs-material==9.4.8"
 ]
 test = [
     "pytest==8.4.1",
     "pytest-cov==6.2.1",
     "pytest-mock==3.14.1"
 ]
-[project.optional-dependencies]
-docs = [
-  "mkdocs==1.5.3",
-  "mkdocs-material==9.4.8"
-]
-
 
 [build-system]
 requires = ["setuptools>=61.0"]
