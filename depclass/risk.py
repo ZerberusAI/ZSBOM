@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .risk_model import RiskModel
 from .risk_calculator import WeightedRiskCalculator
+from .models import PackageRef
 
 
 def parse_declared_versions(dependencies: Dict[str, Any]) -> Dict[str, str]:
@@ -160,10 +161,9 @@ def compute_package_score(
     
     # Calculate comprehensive score using the new framework
     # Note: repo_path is no longer used - repository discovery is now handled automatically
+    pkg_ref = PackageRef(name=package, installed_version=installed_version, declared_version=declared_version)
     result = calculator.calculate_score(
-        package=package,
-        installed_version=installed_version,
-        declared_version=declared_version,
+        package=pkg_ref,
         cve_list=cve_list,
         typosquatting_whitelist=typosquatting_whitelist,
     )
@@ -297,11 +297,9 @@ def score_packages(
         # Get CVEs
         cves = _package_cve_issues(pkg, cve_data)
         
-        # Calculate score with enhanced package specification data
+        pkg_ref = PackageRef(name=pkg, installed_version=installed_version, declared_version=primary_declared_ver)
         detailed_score = calculator.calculate_score(
-            package=pkg,
-            installed_version=installed_version,
-            declared_version=primary_declared_ver,
+            package=pkg_ref,
             cve_list=cves,
             typosquatting_whitelist=typosquatting_whitelist,
             # Pass enhanced data for new declared vs installed analysis

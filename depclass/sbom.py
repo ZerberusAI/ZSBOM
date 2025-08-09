@@ -31,7 +31,7 @@ SEVERITY_MAP = {
 
 
 
-def generate_sbom(dependencies: dict, cve_data: dict, config: dict):
+def generate(dependencies: dict, cve_data: dict, config: dict):
     bom = Bom()
     bom.metadata.tools.components.add(cdx_lib_component())
     component_map = {}
@@ -58,6 +58,10 @@ def generate_sbom(dependencies: dict, cve_data: dict, config: dict):
         f.write(sbom.output_as_string())
     
     print(f"SBOM report exported to: {output_path}")
+
+
+# Backwards compatibility
+generate_sbom = generate
 
 def validate_json_format(sbom):
     serialized_json = sbom.output_as_string(indent=2)
@@ -218,3 +222,4 @@ def read_json_file(file_path: str):
 #    outputter = get_instance(bom, output_format='json')
 #    with open("sbom.json", "w") as f:
 #        f.write(outputter.output_as_string())
+

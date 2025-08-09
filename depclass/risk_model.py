@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from .models import RiskDimension
+
 
 @dataclass
 class RiskModel:
@@ -17,14 +19,14 @@ class RiskModel:
     low_risk_threshold: float = 80.0    # 80-100 = Low Risk
     medium_risk_threshold: float = 50.0 # 50-79 = Medium Risk (0-49 = High Risk)
 
-    def get_weights_dict(self) -> Dict[str, float]:
-        """Get weights as a dictionary for easy access."""
+    def get_weights_dict(self) -> Dict[RiskDimension, float]:
+        """Get weights keyed by RiskDimension."""
         return {
-            "declared_vs_installed": self.weight_declared_vs_installed,
-            "known_cves": self.weight_known_cves,
-            "cwe_coverage": self.weight_cwe_coverage,
-            "package_abandonment": self.weight_package_abandonment,
-            "typosquat_heuristics": self.weight_typosquat_heuristics,
+            RiskDimension.DECLARED_VS_INSTALLED: self.weight_declared_vs_installed,
+            RiskDimension.KNOWN_CVES: self.weight_known_cves,
+            RiskDimension.CWE_COVERAGE: self.weight_cwe_coverage,
+            RiskDimension.PACKAGE_ABANDONMENT: self.weight_package_abandonment,
+            RiskDimension.TYPOSQUAT_HEURISTICS: self.weight_typosquat_heuristics,
         }
 
     def get_thresholds_dict(self) -> Dict[str, float]:
