@@ -8,10 +8,10 @@ import yaml
 from depclass.rich_utils.ui_helpers import get_console
 
 from depclass.db.vulnerability import VulnerabilityCache
-from depclass.extract import extract_dependencies
+from depclass.extract import extract
 from depclass.risk import score_packages
 from depclass.risk_model import load_model
-from depclass.sbom import generate_sbom, read_json_file
+from depclass.sbom import generate, read_json_file
 from depclass.validate import validate
 
 # Initialize Typer app
@@ -36,7 +36,8 @@ def main(
     config_path: str = typer.Option("config.yaml", "-c", "--config", help="Path to config YAML"),
     output: Optional[str] = typer.Option(None, "-o", "--output", help="Output file override"),
     skip_sbom: bool = typer.Option(False, "-sb", "--skip-sbom", help="Skip the SBOM report generation"),
-    ignore_conflicts: bool = typer.Option(False, "--ignore-conflicts", help="Continue analysis even when dependency conflicts are detected")
+    ignore_conflicts: bool = typer.Option(False, "--ignore-conflicts", help="Continue analysis even when dependency conflicts are detected"),
+    ecosystem: str = typer.Option("python", "--ecosystem", help="Target dependency ecosystem")
 ):
     """Run ZSBOM security analysis and generate Software Bill of Materials."""
 
@@ -54,7 +55,7 @@ def main(
         cache = VulnerabilityCache(config['caching']['path'])
 
     # Extract dependencies using enhanced parser with transitive analysis
-    dependencies = extract_dependencies(config=config, cache=cache)
+    dependencies = extract(config=config, cache=cache, ecosystem=ecosystem)
     
     # Extract the dependencies dict from the new transitive analysis format
     dependency_data = dependencies.get("dependencies", dependencies)
@@ -138,7 +139,7 @@ def main(
         if cve_data:
             # Use resolution details from transitive analysis for complete dependency coverage
             sbom_dependencies = transitive_data.get("resolution_details", dependency_data)
-            generate_sbom(sbom_dependencies, cve_data, config)
+            generate(sbom_dependencies, cve_data, config)
 
 if __name__ == "__main__":
     app()
