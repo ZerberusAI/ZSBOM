@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from packaging.specifiers import SpecifierSet
 
-from depclass.extract import DependencyFileParser, extract_dependencies
+from depclass.extract import DependencyFileParser, extract
 
 
 class TestDependencyFileParser:
@@ -285,7 +285,7 @@ class TestExtractDependenciesFunction:
             req_file = Path(temp_dir) / "requirements.txt"
             req_file.write_text("requests==2.28.0\nnumpy>=1.21.0")
             
-            result = extract_dependencies(temp_dir)
+            result = extract(project_path=temp_dir)
             
             # New format includes both dependencies and transitive_analysis
             assert "dependencies" in result
@@ -300,7 +300,7 @@ class TestExtractDependenciesFunction:
     def test_extract_dependencies_current_directory(self):
         """Test extract_dependencies with default current directory."""
         # This should run without errors and return runtime packages
-        result = extract_dependencies()
+        result = extract()
         
         assert "dependencies" in result
         assert "transitive_analysis" in result
@@ -321,7 +321,7 @@ class TestExtractDependenciesFunction:
 dependencies = ["requests>=2.28.0", "flask>=2.0.0"]
             """)
             
-            result = extract_dependencies(temp_dir)
+            result = extract(project_path=temp_dir)
             
             # New format includes both dependencies and transitive_analysis
             assert "dependencies" in result

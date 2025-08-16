@@ -20,7 +20,7 @@ import hashlib
 import json
 import tempfile
 import time
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 from pathlib import Path
 
 try:
@@ -711,6 +711,32 @@ def extract_dependencies(project_path: str = ".", config: Optional[Dict] = None,
     return parser.extract_dependencies_with_transitive_analysis(config or {}, cache)
 
 
+# Registry for ecosystem-specific extractors
+EXTRACTOR_REGISTRY: Dict[str, Callable[..., Dict[str, Any]]] = {}
+
+
+def register_extractor(ecosystem: str, func: Callable[..., Dict[str, Any]]) -> None:
+    """Register a dependency extraction function for an ecosystem."""
+    EXTRACTOR_REGISTRY[ecosystem] = func
+
+
+def extract(
+    project_path: str = ".",
+    ecosystem: str = "python",
+    config: Optional[Dict] = None,
+    cache=None,
+) -> Dict[str, Any]:
+    """Extract dependencies for the given ecosystem."""
+    extractor = EXTRACTOR_REGISTRY.get(ecosystem)
+    if not extractor:
+        raise ValueError(f"Unsupported ecosystem: {ecosystem}")
+    return extractor(project_path=project_path, config=config, cache=cache)
+
+
+# Register default python extractor
+register_extractor("python", extract_dependencies)
+
+
 def get_installed_packages() -> Dict[str, str]:
     """Get currently installed packages and their versions."""
     return DependencyFileParser()._get_installed_packages()
@@ -722,3 +748,4 @@ if __name__ == "__main__":
         print(f"\n{file_name}:")
         for package, version in packages.items():
             print(f"  {package}: {version}")
+
