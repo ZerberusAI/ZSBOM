@@ -2,14 +2,20 @@
 
 import json
 import sqlite3
-import requests
 import re
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import logging
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+
+try:  # pragma: no cover - optional dependencies
+    import requests  # type: ignore
+    from requests.adapters import HTTPAdapter  # type: ignore
+    from urllib3.util.retry import Retry  # type: ignore
+except Exception:  # pragma: no cover - during tests no external deps
+    requests = None
+    HTTPAdapter = object  # type: ignore
+    Retry = object  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -28,27 +34,30 @@ class PyPIMetadataService:
             cache_db_path: Path to SQLite cache database
         """
         self.cache_db_path = cache_db_path
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'ZSBOM/1.0 (Package Risk Assessment)'
-        })
-        
-        # Connection pooling for better performance
-        retry_strategy = Retry(
-            total=2,
-            backoff_factor=0.1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        
-        adapter = HTTPAdapter(
-            pool_connections=20,  # Number of connection pools
-            pool_maxsize=20,      # Max connections per pool
-            max_retries=retry_strategy
-        )
-        
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
-        
+
+        if requests is not None:
+            self.session = requests.Session()
+            self.session.headers.update({'User-Agent': 'ZSBOM/1.0 (Package Risk Assessment)'})
+
+            # Connection pooling for better performance
+            retry_strategy = Retry(total=2, backoff_factor=0.1, status_forcelist=[429, 500, 502, 503, 504])
+            adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry_strategy)
+            self.session.mount("http://", adapter)
+            self.session.mount("https://", adapter)
+        else:  # pragma: no cover - used in tests without requests
+            class _DummySession:
+                headers: Dict[str, str] = {}
+                def get(self, *args, **kwargs):
+                    class _Resp:
+                        status_code = 404
+                        def json(self):
+                            return {}
+                    return _Resp()
+                def mount(self, *args, **kwargs):
+                    pass
+
+            self.session = _DummySession()
+
         self._init_cache_db()
 
     def _init_cache_db(self) -> None:

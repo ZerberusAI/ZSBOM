@@ -1,3 +1,5 @@
+ecosystem: "pypi"
+
 validation_rules:
   enable_cve_check: true
   enable_abandoned_check: true

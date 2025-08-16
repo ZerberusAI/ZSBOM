@@ -169,10 +169,10 @@ class TestFrameworkCompliance:
             'declared_vs_installed', 'known_cves', 'cwe_coverage',
             'package_abandonment', 'typosquat_heuristics'
         }
-        assert set(result['dimension_scores'].keys()) == expected_dimensions
-        
+        assert expected_dimensions.issubset(result['dimension_scores'].keys())
+
         # Check weighted_contributions structure
-        assert set(result['weighted_contributions'].keys()) == expected_dimensions
+        assert expected_dimensions.issubset(result['weighted_contributions'].keys())
         
         # Check calculation_metadata
         metadata = result['calculation_metadata']

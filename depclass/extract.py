@@ -34,9 +34,14 @@ except ImportError:
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
-from rich.console import Console
-from rich.spinner import Spinner
-from rich.live import Live
+try:
+    from rich.console import Console
+    from rich.spinner import Spinner
+    from rich.live import Live
+except Exception:  # pragma: no cover - optional dependency
+    Console = None
+    Spinner = None
+    Live = None
 
 
 class DependencyFileParser:
@@ -71,6 +76,12 @@ class DependencyFileParser:
                 except Exception as e:
                     print(f"⚠️ Error parsing {file_name}: {e}")
         
+        # Always include currently installed packages under 'runtime'
+        try:
+            dependencies["runtime"] = self._get_installed_packages()
+        except Exception:  # pragma: no cover - fallback if importlib unavailable
+            dependencies["runtime"] = {}
+
         return dependencies
     
     def _parse_file(self, file_path: Path) -> Optional[Dict[str, str]]:
@@ -696,17 +707,43 @@ class DependencyFileParser:
         return result
 
 
-def extract_dependencies(project_path: str = ".", config: Optional[Dict] = None, cache=None) -> Dict[str, Any]:
-    """Extract dependencies with transitive analysis from all supported file formats.
-    
+def extract_dependencies(
+    project_path: str = ".",
+    ecosystem: str = "python",
+    config: Optional[Dict] = None,
+    cache=None,
+) -> Any:
+    """Extract dependencies for the requested ecosystem.
+
+    When ``ecosystem`` is ``"npm"`` only a lightweight manifest parsing is
+    performed and a tuple of ``(packages, metadata)`` is returned.  For the
+    default ``"python"`` ecosystem the original enhanced extraction with
+    transitive analysis is executed.
+
     Args:
         project_path: Path to the project directory
+        ecosystem: Package ecosystem to parse (``python`` or ``npm``)
         config: Configuration dictionary containing transitive analysis settings
         cache: VulnerabilityCache instance for SQLite caching
-        
+
     Returns:
-        Dictionary containing dependencies and transitive analysis results
+        For the Python ecosystem a dictionary containing dependencies and
+        transitive analysis results is returned.  For ``npm`` a tuple of
+        ``(packages, {"ecosystem": "npm", "graph_partial": ...})`` is
+        returned.
     """
+
+    if isinstance(ecosystem, dict) and config is None:
+        # Backwards compatibility: second argument used to be config
+        config = ecosystem
+        ecosystem = "python"
+
+    if ecosystem.lower() == "npm":
+        from .ecosystems.npm.reader import read_manifest
+
+        packages, graph = read_manifest(project_path)
+        return packages, {"ecosystem": "npm", "graph_partial": graph}
+
     parser = DependencyFileParser(project_path)
     return parser.extract_dependencies_with_transitive_analysis(config or {}, cache)
 

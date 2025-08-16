@@ -1,8 +1,12 @@
 """Configuration validation for ZSBOM risk scoring."""
 
 from typing import Any, Dict, List, Optional
-import yaml
 import re
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None
 
 from .risk_model import RiskModel
 
@@ -352,19 +356,20 @@ class ConfigValidator:
             Tuple of (config_dict, validation_errors)
         """
         try:
+            if yaml is None:
+                return {}, ["PyYAML library is not installed"]
+
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
-            
+
             if not isinstance(config, dict):
                 return {}, ["Configuration file must contain a dictionary"]
-            
+
             validation_errors = self.validate_config(config)
             return config, validation_errors
-            
+
         except FileNotFoundError:
             return {}, [f"Configuration file not found: {config_path}"]
-        except yaml.YAMLError as e:
-            return {}, [f"Error parsing YAML configuration: {e}"]
         except Exception as e:
             return {}, [f"Error loading configuration: {e}"]
     

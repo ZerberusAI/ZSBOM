@@ -8,6 +8,11 @@ from .dimension_scorers import (
     CWECoverageScorer,
     PackageAbandonmentScorer,
     TyposquatHeuristicsScorer,
+    NpmTyposquatScorer,
+    NpmDepConfusionScorer,
+    NpmHygieneScorer,
+    NpmLockDisciplineScorer,
+    NpmAbandonmentScorer,
 )
 from .risk_model import RiskModel
 
@@ -26,7 +31,7 @@ class WeightedRiskCalculator:
             model: RiskModel with weights and thresholds
         """
         self.model = model or RiskModel()
-        
+
         # Initialize dimension scorers
         self.scorers = {
             "declared_vs_installed": DeclaredVsInstalledScorer(),
@@ -34,6 +39,11 @@ class WeightedRiskCalculator:
             "cwe_coverage": CWECoverageScorer(),
             "package_abandonment": PackageAbandonmentScorer(),
             "typosquat_heuristics": TyposquatHeuristicsScorer(),
+            "npm_typosquat": NpmTyposquatScorer(),
+            "npm_dep_confusion": NpmDepConfusionScorer(),
+            "npm_hygiene": NpmHygieneScorer(),
+            "npm_lock_discipline": NpmLockDisciplineScorer(),
+            "npm_abandonment": NpmAbandonmentScorer(),
         }
 
     def calculate_score(
@@ -59,58 +69,36 @@ class WeightedRiskCalculator:
             Dictionary containing scores, risk level, and detailed breakdown
         """
         # Calculate individual dimension scores (0-10 scale)
-        dimension_scores = {}
-        dimension_details = {}
-        
-        # Declared vs Installed dimension
-        dimension_scores["declared_vs_installed"] = self.scorers["declared_vs_installed"].score(
-            package, installed_version, declared_version, **kwargs
-        )
-        dimension_details["declared_vs_installed"] = self.scorers["declared_vs_installed"].get_details(
-            package, installed_version, declared_version, **kwargs
-        )
-        
-        # Known CVEs dimension
-        dimension_scores["known_cves"] = self.scorers["known_cves"].score(
-            package, installed_version, declared_version, cve_list=cve_list, **kwargs
-        )
-        dimension_details["known_cves"] = self.scorers["known_cves"].get_details(
-            package, installed_version, declared_version, cve_list=cve_list, **kwargs
-        )
-        
-        # CWE Coverage dimension
-        dimension_scores["cwe_coverage"] = self.scorers["cwe_coverage"].score(
-            package, installed_version, declared_version, cve_list=cve_list, **kwargs
-        )
-        dimension_details["cwe_coverage"] = self.scorers["cwe_coverage"].get_details(
-            package, installed_version, declared_version, cve_list=cve_list, **kwargs
-        )
-        
-        # Package Abandonment dimension
-        dimension_scores["package_abandonment"] = self.scorers["package_abandonment"].score(
-            package, installed_version, declared_version, **kwargs
-        )
-        dimension_details["package_abandonment"] = self.scorers["package_abandonment"].get_details(
-            package, installed_version, declared_version, **kwargs
-        )
-        
-        # Typosquat Heuristics dimension
-        dimension_scores["typosquat_heuristics"] = self.scorers["typosquat_heuristics"].score(
-            package, installed_version, declared_version, typosquatting_whitelist=typosquatting_whitelist, **kwargs
-        )
-        dimension_details["typosquat_heuristics"] = self.scorers["typosquat_heuristics"].get_details(
-            package, installed_version, declared_version, typosquatting_whitelist=typosquatting_whitelist, **kwargs
-        )
-        
+        dimension_scores: Dict[str, float] = {}
+        dimension_details: Dict[str, Any] = {}
+
+        for name, scorer in self.scorers.items():
+            dimension_scores[name] = scorer.score(
+                package,
+                installed_version,
+                declared_version,
+                cve_list=cve_list,
+                typosquatting_whitelist=typosquatting_whitelist,
+                **kwargs,
+            )
+            dimension_details[name] = scorer.get_details(
+                package,
+                installed_version,
+                declared_version,
+                cve_list=cve_list,
+                typosquatting_whitelist=typosquatting_whitelist,
+                **kwargs,
+            )
+
         # Apply weights to get weighted contributions
         weighted_contributions = self._apply_weights(dimension_scores)
-        
+
         # Calculate final score (0-100 scale)
         final_score = sum(weighted_contributions.values())
-        
+
         # Determine risk level
         risk_level = self._determine_risk_level(final_score)
-        
+
         return {
             "package": package,
             "installed_version": installed_version,
