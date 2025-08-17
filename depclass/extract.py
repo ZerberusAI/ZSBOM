@@ -294,61 +294,49 @@ class DependencyFileParser:
         """Extract dependencies with comprehensive transitive analysis.
         
         Returns:
-            Dictionary containing both dependencies and transitive analysis results
+            Dictionary containing dependencies.json format
         """
         # Extract base dependencies
         dependencies = self.extract_dependencies()
         
-        # Initialize transitive analysis result
-        transitive_analysis = {
-            "status": "unknown",
-            "classification": {},
+        # Initialize dependencies analysis result
+        dependencies_result = {
+            "total_packages": 0,
             "dependency_tree": {},
-            "depth_levels": {},
-            "direct_sources": {},
-            "resolution_details": {},
-            "conflicts": {}
+            "package_files": []
         }
         
         try:
             # Check if pip-tools is available
             if not self._check_pip_tools_available():
-                transitive_analysis["status"] = "pip_tools_unavailable"
                 print("⚠️ pip-tools not available. Install with: pip install pip-tools>=7.4.1")
-                return {"dependencies": dependencies, "transitive_analysis": transitive_analysis}
+                return {"dependencies": dependencies, "dependencies_analysis": dependencies_result}
             
             # Consolidate requirements from all dependency files
             consolidated_requirements = self._consolidate_requirements(dependencies, config)
             if not consolidated_requirements:
-                transitive_analysis["status"] = "no_requirements"
-                return {"dependencies": dependencies, "transitive_analysis": transitive_analysis}
+                return {"dependencies": dependencies, "dependencies_analysis": dependencies_result}
             
             # Run pip-compile to resolve transitive dependencies
             resolved_output = self._run_pip_compile_with_spinner(consolidated_requirements, config, cache)
             
-            # Parse the dependency tree and classification
-            tree_data = self._parse_dependency_tree(resolved_output, dependencies, config)
-            transitive_analysis.update(tree_data)
-            transitive_analysis["status"] = "resolved"
+            # Parse the dependency tree and build new format
+            dependencies_data = self._build_dependencies_structure(resolved_output, dependencies, config)
+            dependencies_result.update(dependencies_data)
             
         except subprocess.CalledProcessError as e:
             if "could not find a version that satisfies" in str(e.stderr).lower() or "no matching distribution" in str(e.stderr).lower():
-                transitive_analysis["status"] = "conflict_detected"
-                transitive_analysis["conflicts"] = self._generate_conflict_recommendations(str(e.stderr), dependencies)
-                
                 if not config.get("ignore_conflicts", False):
                     print(f"❌ Dependency conflicts detected. Use --ignore-conflicts to continue with degraded analysis.")
                     print(f"Error: {e.stderr}")
                     raise RuntimeError("Dependency resolution failed due to conflicts")
             else:
-                transitive_analysis["status"] = "resolution_failed"
                 print(f"⚠️ Failed to resolve dependencies: {e}")
                 
         except Exception as e:
-            transitive_analysis["status"] = "analysis_failed"
             print(f"⚠️ Transitive analysis failed: {e}")
         
-        return {"dependencies": dependencies, "transitive_analysis": transitive_analysis}
+        return {"dependencies": dependencies, "dependencies_analysis": dependencies_result}
     
     def _check_pip_tools_available(self) -> bool:
         """Check if pip-tools is available."""
@@ -542,8 +530,83 @@ class DependencyFileParser:
             except OSError:
                 pass
     
-    def _parse_dependency_tree(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:
-        """Parse pip-compile output to build dependency tree and classification."""
+    def _build_dependencies_structure(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:
+        """Build the new dependencies.json structure from pip-compile output."""
+        # First parse the old format to get the data we need
+        tree_data = self._parse_dependency_tree_legacy(pip_output, original_dependencies, config)
+        
+        classification = tree_data["classification"]
+        dependency_tree = tree_data["dependency_tree"]
+        depth_levels = tree_data["depth_levels"]
+        direct_sources = tree_data["direct_sources"]
+        resolution_details = tree_data["resolution_details"]
+        
+        # Build hierarchical dependency tree
+        hierarchical_tree = {}
+        
+        # Start with direct dependencies
+        for package, package_type in classification.items():
+            if package_type == "direct":
+                package_version = resolution_details.get(package, "")
+                package_key = f"{package}=={package_version}" if package_version else package
+                
+                hierarchical_tree[package_key] = {
+                    "type": "direct",
+                    "declared_in": direct_sources.get(package, []),
+                    "children": self._build_children(package, dependency_tree, depth_levels, resolution_details, classification)
+                }
+        
+        # Build package_files structure
+        package_files = []
+        for file_name, packages in original_dependencies.items():
+            if file_name != "runtime" and packages:  # Skip runtime packages
+                file_packages = []
+                for package, version_spec in packages.items():
+                    if version_spec:
+                        file_packages.append(f"{package}{version_spec}")
+                    else:
+                        file_packages.append(package)
+                
+                if file_packages:
+                    package_files.append({
+                        "path": file_name,
+                        "packages": file_packages
+                    })
+        
+        return {
+            "total_packages": len(resolution_details),
+            "dependency_tree": hierarchical_tree,
+            "package_files": package_files
+        }
+    
+    def _build_children(self, parent_package: str, dependency_tree: Dict[str, List[str]], 
+                       depth_levels: Dict[str, int], resolution_details: Dict[str, str], 
+                       classification: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+        """Recursively build children structure for a package."""
+        children = {}
+        
+        # Find all packages that have this package as a parent
+        for package, parents in dependency_tree.items():
+            if parent_package in parents:
+                package_version = resolution_details.get(package, "")
+                package_key = f"{package}=={package_version}" if package_version else package
+                
+                child_info = {
+                    "type": classification.get(package, "transitive"),
+                    "depth": depth_levels.get(package, 1)
+                }
+                
+                # Recursively build children of this child
+                child_children = self._build_children(package, dependency_tree, depth_levels, resolution_details, classification)
+                if child_children:
+                    child_info["children"] = child_children
+                
+                children[package_key] = child_info
+        
+        return children
+    
+    def _parse_dependency_tree_legacy(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:
+        """Parse pip-compile output to build dependency tree and classification (legacy format)."""
         lines = pip_output.strip().split('\n')
         
         # Find direct dependencies (those that appear in original requirements)
@@ -705,7 +768,7 @@ def extract_dependencies(project_path: str = ".", config: Optional[Dict] = None,
         cache: VulnerabilityCache instance for SQLite caching
         
     Returns:
-        Dictionary containing dependencies and transitive analysis results
+        Dictionary containing dependencies and dependencies_analysis results
     """
     parser = DependencyFileParser(project_path)
     return parser.extract_dependencies_with_transitive_analysis(config or {}, cache)
