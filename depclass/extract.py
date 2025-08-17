@@ -71,6 +71,11 @@ class DependencyFileParser:
                 except Exception as e:
                     print(f"⚠️ Error parsing {file_name}: {e}")
         
+        # Always include runtime packages for compatibility
+        runtime_packages = self._get_installed_packages()
+        if runtime_packages:
+            dependencies["runtime"] = runtime_packages
+        
         return dependencies
     
     def _parse_file(self, file_path: Path) -> Optional[Dict[str, str]]:
@@ -576,7 +581,8 @@ class DependencyFileParser:
         return {
             "total_packages": len(resolution_details),
             "dependency_tree": hierarchical_tree,
-            "package_files": package_files
+            "package_files": package_files,
+            "resolution_details": resolution_details
         }
     
     def _build_children(self, parent_package: str, dependency_tree: Dict[str, List[str]], 

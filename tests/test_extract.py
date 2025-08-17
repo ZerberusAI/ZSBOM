@@ -287,9 +287,9 @@ class TestExtractDependenciesFunction:
             
             result = extract(project_path=temp_dir)
             
-            # New format includes both dependencies and transitive_analysis
+            # New format includes both dependencies and dependencies_analysis
             assert "dependencies" in result
-            assert "transitive_analysis" in result
+            assert "dependencies_analysis" in result
             
             deps = result["dependencies"]
             assert "requirements.txt" in deps
@@ -303,7 +303,7 @@ class TestExtractDependenciesFunction:
         result = extract()
         
         assert "dependencies" in result
-        assert "transitive_analysis" in result
+        assert "dependencies_analysis" in result
         assert "runtime" in result["dependencies"]
         assert isinstance(result["dependencies"]["runtime"], dict)
 
@@ -323,9 +323,9 @@ dependencies = ["requests>=2.28.0", "flask>=2.0.0"]
             
             result = extract(project_path=temp_dir)
             
-            # New format includes both dependencies and transitive_analysis
+            # New format includes both dependencies and dependencies_analysis
             assert "dependencies" in result
-            assert "transitive_analysis" in result
+            assert "dependencies_analysis" in result
             
             deps = result["dependencies"]
             # Should have both files
