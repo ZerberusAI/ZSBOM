@@ -125,6 +125,31 @@ def collect_generated_files(config: dict) -> list:
     return generated_files
 
 
+def collect_scan_files_for_upload(config: dict) -> dict:
+    """Collect generated files for upload with proper renaming."""
+    file_mapping = {
+        # ZSBOM file -> Upload name (according to API specification)
+        "dependencies.json": "dependencies.json",
+        "validation_report.json": "vulnerabilities.json",  # Rename
+        "sbom.json": "sbom.json", 
+        "risk_report.json": "risk_analysis.json",  # Rename
+        "scan_metadata.json": "scan_metadata.json"
+    }
+    
+    available_files = {}
+    output_config = config.get("output", {})
+    
+    for zsbom_file, upload_name in file_mapping.items():
+        # Get file path from config or use default
+        config_key = zsbom_file.replace(".json", "_file")
+        file_path = output_config.get(config_key, zsbom_file)
+        
+        if os.path.exists(file_path):
+            available_files[upload_name] = file_path
+    
+    return available_files
+
+
 def calculate_scan_statistics(
     dependencies_analysis: dict, 
     results: dict, 
@@ -445,6 +470,46 @@ def main(
                 console.print("📋 Fallback metadata saved to scan_metadata_fallback.json", style="dim")
             except Exception:
                 pass
+        
+        # NEW: Trace-AI Upload Integration (Phase 5)
+        try:
+            from depclass.upload import TraceAIUploadManager
+            
+            upload_manager = TraceAIUploadManager()
+            if upload_manager.is_upload_enabled():
+                console.print("\n🚀 Uploading to Zerberus Trace-AI...", style="bold blue")
+                
+                # Collect scan files with proper renaming
+                scan_files = collect_scan_files_for_upload(config)
+                
+                if scan_files:
+                    # Get final metadata for upload
+                    final_metadata = metadata_collector.get_final_metadata() if hasattr(metadata_collector, 'get_final_metadata') else {}
+                    
+                    upload_result = upload_manager.execute_upload_workflow(
+                        scan_files=scan_files,
+                        scan_metadata=final_metadata
+                    )
+                    
+                    if upload_result.success:
+                        # Success message is displayed by orchestrator
+                        pass
+                    else:
+                        if upload_result.skip_reason:
+                            # Silent skip for missing environment
+                            pass
+                        else:
+                            console.print(f"⚠️ Upload failed: {upload_result.error}", style="bold yellow")
+                            console.print("ZSBOM completed normally despite upload failure", style="dim")
+                else:
+                    console.print("⚠️ No files available for upload", style="yellow")
+                    
+        except ImportError:
+            # Upload module not available - silently continue
+            pass
+        except Exception as upload_error:
+            console.print(f"⚠️ Upload failed: {str(upload_error)}", style="bold yellow")
+            console.print("ZSBOM completed normally despite upload failure", style="dim")
         
         # Cleanup resources
         metadata_collector.cleanup()
