@@ -7,6 +7,7 @@ error handling, and user feedback.
 
 import asyncio
 import time
+import os
 from datetime import datetime
 from typing import Dict, List
 

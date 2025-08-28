@@ -62,7 +62,7 @@ class ZerberusAPIClient:
     )
     def initiate_scan(self, request: ScanInitiationRequest) -> ScanInitiationResponse:
         """POST /trace-ai/scans/initiate"""
-        endpoint = "/trace-ai/scans/initiate"
+        endpoint = "trace-ai/scans/initiate"
         url = urljoin(self.config.api_url, endpoint)
         
         # Convert request to dict
@@ -110,7 +110,7 @@ class ZerberusAPIClient:
     )
     def get_upload_urls(self, scan_id: str, files: List[str]) -> UploadUrlsResponse:
         """POST /trace-ai/scans/{scan_id}/upload-urls"""
-        endpoint = f"/trace-ai/scans/{scan_id}/upload-urls"
+        endpoint = f"trace-ai/scans/{scan_id}/upload-urls"
         url = urljoin(self.config.api_url, endpoint)
         
         payload = {"files": files}
@@ -148,7 +148,7 @@ class ZerberusAPIClient:
     )
     def acknowledge_completion(self, scan_id: str, request: CompletionRequest) -> CompletionResponse:
         """POST /trace-ai/scans/{scan_id}/complete"""
-        endpoint = f"/trace-ai/scans/{scan_id}/complete"
+        endpoint = f"trace-ai/scans/{scan_id}/complete"
         url = urljoin(self.config.api_url, endpoint)
         
         payload = {
@@ -273,11 +273,11 @@ class ZerberusAPIClient:
         """Handle common API response errors"""
         if response.status_code == 401:
             raise AuthenticationError(
-                "Invalid Zerberus API keys. Please check ZERBERUS_ORG_KEY and ZERBERUS_PROJECT_KEY"
+                "Invalid Zerberus license key. Please check ZERBERUS_LICENSE_KEY"
             )
         elif response.status_code == 403:
             raise AuthenticationError(
-                "Access forbidden. Your API keys may not have permission for this project"
+                "Access forbidden. Your license key may not have permission for this project"
             )
         elif response.status_code == 404:
             raise APIConnectionError(

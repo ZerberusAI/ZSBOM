@@ -19,8 +19,7 @@ class TraceAIEnvironmentDetector:
     
     REQUIRED_VARS = [
         "ZERBERUS_API_URL",
-        "ZERBERUS_ORG_KEY", 
-        "ZERBERUS_PROJECT_KEY"
+        "ZERBERUS_LICENSE_KEY"
     ]
     
     OPTIONAL_VARS = {
@@ -59,20 +58,12 @@ class TraceAIEnvironmentDetector:
                 validation_type="environment"
             )
         
-        # Validate key formats
-        org_key = os.getenv("ZERBERUS_ORG_KEY")
-        if not self._validate_key_format(org_key, "org"):
+        # Validate license key format
+        license_key = os.getenv("ZERBERUS_LICENSE_KEY")
+        if not self._validate_license_key_format(license_key):
             return ValidationResult(
                 is_valid=False,
-                error_message="Invalid ZERBERUS_ORG_KEY format",
-                validation_type="environment"
-            )
-        
-        project_key = os.getenv("ZERBERUS_PROJECT_KEY")
-        if not self._validate_key_format(project_key, "proj"):
-            return ValidationResult(
-                is_valid=False,
-                error_message="Invalid ZERBERUS_PROJECT_KEY format",
+                error_message="Invalid ZERBERUS_LICENSE_KEY format",
                 validation_type="environment"
             )
         
@@ -89,8 +80,7 @@ class TraceAIEnvironmentDetector:
         
         # Extract required configuration
         api_url = os.getenv("ZERBERUS_API_URL")
-        org_key = os.getenv("ZERBERUS_ORG_KEY")
-        project_key = os.getenv("ZERBERUS_PROJECT_KEY")
+        license_key = os.getenv("ZERBERUS_LICENSE_KEY")
         
         # Extract optional configuration with defaults
         config_kwargs = {}
@@ -107,8 +97,7 @@ class TraceAIEnvironmentDetector:
         
         return TraceAIConfig(
             api_url=api_url,
-            org_key=org_key,
-            project_key=project_key,
+            license_key=license_key,
             **config_kwargs
         )
     
@@ -121,22 +110,52 @@ class TraceAIEnvironmentDetector:
             parsed = urlparse(url)
             return all([
                 parsed.scheme in ['http', 'https'],
-                parsed.netloc,
-                not parsed.path or parsed.path == '/'
+                parsed.netloc
             ])
         except Exception:
             return False
     
-    def _validate_key_format(self, key: Optional[str], key_type: str) -> bool:
-        """Validate key format (basic length and pattern check)"""
+    def _validate_license_key_format(self, key: Optional[str]) -> bool:
+        """Validate license key format (ZRB-{prefix}-{hash}-{checksum})"""
         if not key:
             return False
         
-        # Expected format: {prefix}_{32_hex_characters}
-        expected_prefix = key_type
-        pattern = rf"^{expected_prefix}_[a-fA-F0-9]{{32}}$"
+        # Check basic format: ZRB-{prefix}-{hash}-{checksum}
+        if not key.startswith('ZRB-'):
+            return False
         
-        return bool(re.match(pattern, key))
+        parts = key.split('-')
+        if len(parts) != 4:
+            return False
+        
+        # Basic validation of parts
+        prefix, platform, hash_part, checksum = parts
+        if prefix != 'ZRB':
+            return False
+        
+        # Platform prefix should be 2 characters
+        if len(platform) != 2:
+            return False
+        
+        # Hash part should be 16 hex characters (8 bytes)
+        if len(hash_part) != 16:
+            return False
+        
+        try:
+            int(hash_part, 16)  # Validate hex format
+        except ValueError:
+            return False
+        
+        # Checksum should be 4 hex characters (2 bytes)
+        if len(checksum) != 4:
+            return False
+        
+        try:
+            int(checksum, 16)  # Validate hex format
+        except ValueError:
+            return False
+        
+        return True
     
     def _env_var_to_param(self, env_var: str) -> str:
         """Convert environment variable name to parameter name"""
@@ -155,7 +174,7 @@ class TraceAIEnvironmentDetector:
         for var in self.REQUIRED_VARS:
             value = os.getenv(var)
             if value:
-                if "KEY" in var:
+                if "LICENSE_KEY" in var:
                     summary["detected_variables"][var] = f"{value[:8]}...{value[-4:]}"
                 else:
                     summary["detected_variables"][var] = value

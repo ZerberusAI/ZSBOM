@@ -24,8 +24,7 @@ class TestTraceAIEnvironmentDetector:
         """Test upload enabled when all required vars are present"""
         with patch.dict(os.environ, {
             'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
-            'ZERBERUS_PROJECT_KEY': 'proj_abcdef1234567890abcdef1234567890'
+            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a'
         }):
             assert self.detector.is_upload_enabled() == True
     
@@ -47,16 +46,14 @@ class TestTraceAIEnvironmentDetector:
             'ZERBERUS_API_URL': 'https://api.test.com'
         }, clear=True):
             missing = self.detector.get_missing_variables()
-            assert 'ZERBERUS_ORG_KEY' in missing
-            assert 'ZERBERUS_PROJECT_KEY' in missing
+            assert 'ZERBERUS_LICENSE_KEY' in missing
             assert 'ZERBERUS_API_URL' not in missing
     
     def test_validate_environment_success(self):
         """Test successful environment validation"""
         with patch.dict(os.environ, {
             'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
-            'ZERBERUS_PROJECT_KEY': 'proj_abcdef1234567890abcdef1234567890'
+            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a'
         }):
             result = self.detector.validate_environment()
             assert result.is_valid == True
@@ -73,49 +70,34 @@ class TestTraceAIEnvironmentDetector:
         """Test environment validation with invalid API URL"""
         with patch.dict(os.environ, {
             'ZERBERUS_API_URL': 'not-a-valid-url',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
-            'ZERBERUS_PROJECT_KEY': 'proj_abcdef1234567890abcdef1234567890'
+            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a'
         }):
             result = self.detector.validate_environment()
             assert result.is_valid == False
             assert "Invalid API URL format" in result.error_message
     
-    def test_validate_environment_invalid_org_key(self):
-        """Test environment validation with invalid org key format"""
+    def test_validate_environment_invalid_license_key(self):
+        """Test environment validation with invalid license key format"""
         with patch.dict(os.environ, {
             'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'invalid-key-format',
-            'ZERBERUS_PROJECT_KEY': 'proj_abcdef1234567890abcdef1234567890'
+            'ZERBERUS_LICENSE_KEY': 'invalid-key-format'
         }):
             result = self.detector.validate_environment()
             assert result.is_valid == False
-            assert "Invalid ZERBERUS_ORG_KEY format" in result.error_message
-    
-    def test_validate_environment_invalid_project_key(self):
-        """Test environment validation with invalid project key format"""
-        with patch.dict(os.environ, {
-            'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
-            'ZERBERUS_PROJECT_KEY': 'invalid-key-format'
-        }):
-            result = self.detector.validate_environment()
-            assert result.is_valid == False
-            assert "Invalid ZERBERUS_PROJECT_KEY format" in result.error_message
+            assert "Invalid ZERBERUS_LICENSE_KEY format" in result.error_message
     
     def test_get_upload_config_success(self):
         """Test successful configuration extraction"""
         with patch.dict(os.environ, {
             'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
-            'ZERBERUS_PROJECT_KEY': 'proj_abcdef1234567890abcdef1234567890',
+            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a',
             'TRACE_AI_UPLOAD_TIMEOUT': '600',
             'TRACE_AI_MAX_RETRIES': '5'
         }):
             config = self.detector.get_upload_config()
             
             assert config.api_url == 'https://api.test.com'
-            assert config.org_key == 'org_1234567890abcdef1234567890abcdef'
-            assert config.project_key == 'proj_abcdef1234567890abcdef1234567890'
+            assert config.license_key == 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a'
             assert config.upload_timeout == 600
             assert config.max_retries == 5
             assert config.parallel_uploads == 3  # Default value
@@ -124,8 +106,7 @@ class TestTraceAIEnvironmentDetector:
         """Test configuration extraction with default values"""
         with patch.dict(os.environ, {
             'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
-            'ZERBERUS_PROJECT_KEY': 'proj_abcdef1234567890abcdef1234567890'
+            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a'
         }):
             config = self.detector.get_upload_config()
             
@@ -147,17 +128,16 @@ class TestTraceAIEnvironmentDetector:
         """Test environment summary generation"""
         with patch.dict(os.environ, {
             'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
+            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a',
             'TRACE_AI_UPLOAD_TIMEOUT': '600'
         }, clear=True):
             summary = self.detector.get_environment_summary()
             
-            assert summary["upload_enabled"] == False  # Missing project key
-            assert len(summary["missing_variables"]) == 1
+            assert summary["upload_enabled"] == True
+            assert len(summary["missing_variables"]) == 0
             assert summary["detected_variables"]["ZERBERUS_API_URL"] == 'https://api.test.com'
-            # Should mask sensitive keys
-            assert summary["detected_variables"]["ZERBERUS_ORG_KEY"].startswith("org_1234")
-            assert summary["detected_variables"]["ZERBERUS_ORG_KEY"].endswith("...cdef")
+            # Should mask sensitive keys (first 8 chars + ... + last 4 chars)
+            assert summary["detected_variables"]["ZERBERUS_LICENSE_KEY"] == "ZRB-gh-a...2e3a"
     
     @pytest.mark.parametrize("url,expected", [
         ("https://api.zerberus.ai", True),
@@ -173,16 +153,18 @@ class TestTraceAIEnvironmentDetector:
         result = self.detector._validate_api_url(url)
         assert result == expected
     
-    @pytest.mark.parametrize("key,key_type,expected", [
-        ("org_1234567890abcdef1234567890abcdef", "org", True),
-        ("proj_abcdef1234567890abcdef1234567890", "proj", True),
-        ("org_invalid", "org", False),
-        ("proj_toolong1234567890abcdef1234567890abcdefgh", "proj", False),
-        ("wrong_1234567890abcdef1234567890abcdef", "org", False),
-        ("", "org", False),
-        (None, "org", False)
+    @pytest.mark.parametrize("license_key,expected", [
+        ("ZRB-gh-a3f2d5e8b9c14f7a-2e3a", True),
+        ("ZRB-gl-1234567890abcdef-9876", True),
+        ("ZRB-bb-abcdef1234567890-5432", True),
+        ("ZRB-invalid-format", False),
+        ("WRONG-gh-a3f2d5e8b9c14f7a-2e3a", False),
+        ("ZRB-gh-toolong1234567890abcdefgh-2e3a", False),
+        ("ZRB-gh-short-2e3a", False),
+        ("", False),
+        (None, False)
     ])
-    def test_validate_key_format(self, key, key_type, expected):
-        """Test key format validation with various inputs"""
-        result = self.detector._validate_key_format(key, key_type)
+    def test_validate_license_key_format(self, license_key, expected):
+        """Test license key format validation with various inputs"""
+        result = self.detector._validate_license_key_format(license_key)
         assert result == expected

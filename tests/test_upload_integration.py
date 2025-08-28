@@ -30,8 +30,7 @@ class TestTraceAIUploadIntegration:
         # Common test environment variables
         self.test_env = {
             'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_ORG_KEY': 'org_1234567890abcdef1234567890abcdef',
-            'ZERBERUS_PROJECT_KEY': 'proj_abcdef1234567890abcdef1234567890'
+            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a'
         }
     
     def create_test_files(self):

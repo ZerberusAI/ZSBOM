@@ -24,8 +24,7 @@ class UploadStatus(Enum):
 class TraceAIConfig:
     """Configuration for Trace-AI upload operations"""
     api_url: str
-    org_key: str
-    project_key: str
+    license_key: str
     upload_timeout: int = 300
     max_retries: int = 3
     parallel_uploads: int = 3
@@ -34,8 +33,7 @@ class TraceAIConfig:
     def get_headers(self) -> Dict[str, str]:
         """Get authentication headers for API requests"""
         return {
-            "X-Zerberus-Org-Key": self.org_key,
-            "X-Zerberus-Project-Key": self.project_key,
+            "X-Zerberus-License-Key": self.license_key,
             "Content-Type": "application/json"
         }
 
