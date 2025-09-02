@@ -294,61 +294,49 @@ class DependencyFileParser:
         """Extract dependencies with comprehensive transitive analysis.
         
         Returns:
-            Dictionary containing both dependencies and transitive analysis results
+            Dictionary containing dependencies.json format
         """
         # Extract base dependencies
         dependencies = self.extract_dependencies()
         
-        # Initialize transitive analysis result
-        transitive_analysis = {
-            "status": "unknown",
-            "classification": {},
+        # Initialize dependencies analysis result
+        dependencies_result = {
+            "total_packages": 0,
             "dependency_tree": {},
-            "depth_levels": {},
-            "direct_sources": {},
-            "resolution_details": {},
-            "conflicts": {}
+            "package_files": []
         }
         
         try:
             # Check if pip-tools is available
             if not self._check_pip_tools_available():
-                transitive_analysis["status"] = "pip_tools_unavailable"
                 print("⚠️ pip-tools not available. Install with: pip install pip-tools>=7.4.1")
-                return {"dependencies": dependencies, "transitive_analysis": transitive_analysis}
+                return {"dependencies": dependencies, "dependencies_analysis": dependencies_result}
             
             # Consolidate requirements from all dependency files
             consolidated_requirements = self._consolidate_requirements(dependencies, config)
             if not consolidated_requirements:
-                transitive_analysis["status"] = "no_requirements"
-                return {"dependencies": dependencies, "transitive_analysis": transitive_analysis}
+                return {"dependencies": dependencies, "dependencies_analysis": dependencies_result}
             
             # Run pip-compile to resolve transitive dependencies
             resolved_output = self._run_pip_compile_with_spinner(consolidated_requirements, config, cache)
             
-            # Parse the dependency tree and classification
-            tree_data = self._parse_dependency_tree(resolved_output, dependencies, config)
-            transitive_analysis.update(tree_data)
-            transitive_analysis["status"] = "resolved"
+            # Parse the dependency tree and build new format
+            dependencies_data = self._build_dependencies_structure(resolved_output, dependencies, config)
+            dependencies_result.update(dependencies_data)
             
         except subprocess.CalledProcessError as e:
             if "could not find a version that satisfies" in str(e.stderr).lower() or "no matching distribution" in str(e.stderr).lower():
-                transitive_analysis["status"] = "conflict_detected"
-                transitive_analysis["conflicts"] = self._generate_conflict_recommendations(str(e.stderr), dependencies)
-                
                 if not config.get("ignore_conflicts", False):
                     print(f"❌ Dependency conflicts detected. Use --ignore-conflicts to continue with degraded analysis.")
                     print(f"Error: {e.stderr}")
                     raise RuntimeError("Dependency resolution failed due to conflicts")
             else:
-                transitive_analysis["status"] = "resolution_failed"
                 print(f"⚠️ Failed to resolve dependencies: {e}")
                 
         except Exception as e:
-            transitive_analysis["status"] = "analysis_failed"
             print(f"⚠️ Transitive analysis failed: {e}")
         
-        return {"dependencies": dependencies, "transitive_analysis": transitive_analysis}
+        return {"dependencies": dependencies, "dependencies_analysis": dependencies_result}
     
     def _check_pip_tools_available(self) -> bool:
         """Check if pip-tools is available."""
@@ -542,7 +530,118 @@ class DependencyFileParser:
             except OSError:
                 pass
     
-    def _parse_dependency_tree(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:
+    def _build_dependencies_structure(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:
+        """Build the new dependencies.json structure from pip-compile output."""
+        # First parse the old format to get the data we need
+        tree_data = self._parse_dependency_tree(pip_output, original_dependencies, config)
+        
+        classification = tree_data["classification"]
+        dependency_tree = tree_data["dependency_tree"]
+        depth_levels = tree_data["depth_levels"]
+        direct_sources = tree_data["direct_sources"]
+        resolution_details = tree_data["resolution_details"]
+        
+        # Build hierarchical dependency tree
+        hierarchical_tree = {}
+        
+        # Process ALL packages from resolution_details to ensure none are missing
+        for package in resolution_details:
+            package_version = resolution_details.get(package, "")
+            package_key = f"{package}=={package_version}" if package_version else package
+            
+            # Get classification (default to transitive if not found)
+            package_type = classification.get(package, "transitive")
+            
+            if package_type == "direct":
+                hierarchical_tree[package_key] = {
+                    "type": "direct",
+                    "declared_in": direct_sources.get(package, []),
+                    "children": self._build_children(package, dependency_tree, depth_levels, resolution_details, classification)
+                }
+            # Note: Transitive packages will be added as children through the _build_children method
+            # We don't add them at root level here since they should appear under their parents
+        
+        # Validation: Ensure all packages are accounted for in the tree
+        packages_in_tree = set()
+        self._collect_all_packages_from_tree(hierarchical_tree, packages_in_tree)
+        
+        missing_from_tree = set(resolution_details.keys()) - packages_in_tree
+        if missing_from_tree:
+            print(f"⚠️ Adding {len(missing_from_tree)} orphaned packages to tree root")
+            for orphaned_pkg in missing_from_tree:
+                package_version = resolution_details.get(orphaned_pkg, "")
+                package_key = f"{orphaned_pkg}=={package_version}" if package_version else orphaned_pkg
+                
+                hierarchical_tree[package_key] = {
+                    "type": classification.get(orphaned_pkg, "transitive"),
+                    "declared_in": direct_sources.get(orphaned_pkg, []),
+                    "children": {}
+                }
+        
+        # Build package_files structure
+        package_files = []
+        for file_name, packages in original_dependencies.items():
+            if file_name != "runtime" and packages:  # Skip runtime packages
+                file_packages = []
+                for package, version_spec in packages.items():
+                    if version_spec:
+                        file_packages.append(f"{package}{version_spec}")
+                    else:
+                        file_packages.append(package)
+                
+                if file_packages:
+                    package_files.append({
+                        "path": file_name,
+                        "packages": file_packages
+                    })
+        
+        return {
+            "total_packages": len(resolution_details),
+            "dependency_tree": hierarchical_tree,
+            "package_files": package_files,
+            "resolution_details": resolution_details
+        }
+    
+    def _build_children(self, parent_package: str, dependency_tree: Dict[str, List[str]], 
+                       depth_levels: Dict[str, int], resolution_details: Dict[str, str], 
+                       classification: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+        """Recursively build children structure for a package."""
+        children = {}
+        
+        # Find all packages that have this package as a parent
+        for package, parents in dependency_tree.items():
+            if parent_package in parents:
+                package_version = resolution_details.get(package, "")
+                package_key = f"{package}=={package_version}" if package_version else package
+                
+                child_info = {
+                    "type": classification.get(package, "transitive"),
+                    "depth": depth_levels.get(package, 1)
+                }
+                
+                # Recursively build children of this child
+                child_children = self._build_children(package, dependency_tree, depth_levels, resolution_details, classification)
+                if child_children:
+                    child_info["children"] = child_children
+                
+                children[package_key] = child_info
+        
+        return children
+    
+    def _collect_all_packages_from_tree(self, tree: Dict[str, Dict[str, Any]], packages_set: set) -> None:
+        """Recursively collect all package names from the dependency tree."""
+        for package_key, package_info in tree.items():
+            # Extract package name from 'package==version' format
+            package_name = package_key.split('==')[0].lower()
+            packages_set.add(package_name)
+            
+            # Recursively collect from children
+            children = package_info.get('children', {})
+            if children:
+                self._collect_all_packages_from_tree(children, packages_set)
+    
+    
+    def _parse_dependency_tree(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:  # noqa: ARG002
         """Parse pip-compile output to build dependency tree and classification."""
         lines = pip_output.strip().split('\n')
         
@@ -559,67 +658,155 @@ class DependencyFileParser:
                         direct_sources[package_lower] = []
                     direct_sources[package_lower].append(file_name)
         
-        # Parse resolved dependencies
+        # First pass: Parse all packages and their versions
         resolved_packages = {}
+        resolution_details = {}
+        package_to_via = {}  # Map package to its via relationships
+        
+        # Parse the pip-compile output in a more robust way
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            stripped_line = line.strip()
+            
+            # Skip empty lines and header comments
+            if not stripped_line or stripped_line.startswith('#') and 'via' not in stripped_line:
+                i += 1
+                continue
+            
+            # Check if this is a package line (has == or just package name)
+            if not stripped_line.startswith('#') and not stripped_line.startswith('-'):
+                try:
+                    # Try to parse as requirement
+                    req = Requirement(stripped_line)
+                    package_name = req.name.lower()
+                    package_version = ""
+                    
+                    # Extract version from the line
+                    if '==' in stripped_line:
+                        package_version = stripped_line.split('==')[1].strip()
+                    
+                    resolved_packages[package_name] = package_version
+                    resolution_details[package_name] = package_version
+                    
+                    # Look ahead for via comments
+                    j = i + 1
+                    via_lines = []
+                    
+                    while j < len(lines):
+                        next_line = lines[j].strip()
+                        if next_line.startswith('#') and 'via' in next_line:
+                            via_lines.append(next_line)
+                            j += 1
+                        elif next_line.startswith('#') and not 'via' in next_line:
+                            # Skip non-via comments
+                            j += 1
+                        elif not next_line:
+                            # Skip empty lines
+                            j += 1
+                        else:
+                            # Found next package or end of via comments
+                            break
+                    
+                    # Process all via lines for this package
+                    all_parents = []
+                    has_file_reference = False
+                    
+                    for via_line in via_lines:
+                        if 'via' in via_line:
+                            via_part = via_line.split('via', 1)[1].strip()
+                            
+                            # Handle multi-line via content
+                            for parent_line in via_part.split('\n'):
+                                for parent in parent_line.split(','):
+                                    parent = parent.strip()
+                                    if parent:
+                                        # Clean up parent names
+                                        parent = parent.replace('#', '').strip()
+                                        
+                                        # Check if this is a file reference
+                                        if (parent.startswith('-r ') or 
+                                            parent.endswith('.in') or 
+                                            parent.endswith('.txt') or
+                                            parent.startswith('./') or
+                                            'requirements' in parent):
+                                            has_file_reference = True
+                                        else:
+                                            # This is a package parent - normalize the name
+                                            parent_clean = parent.lower().replace('-', '_')
+                                            if parent_clean and parent_clean != package_name:
+                                                all_parents.append(parent_clean)
+                    
+                    # Store the via relationship
+                    package_to_via[package_name] = {
+                        'parents': list(set(all_parents)),  # Remove duplicates
+                        'has_file_reference': has_file_reference
+                    }
+                    
+                    i = j  # Skip to after the via comments
+                    continue
+                    
+                except Exception as e:
+                    print(f"⚠️ Failed to parse requirement line: {stripped_line} - {e}")
+                    i += 1
+                    continue
+            
+            i += 1
+        
+        # Second pass: Build dependency tree and classification
         dependency_tree = {}
         classification = {}
         depth_levels = {}
-        resolution_details = {}
         
-        # Two-pass parsing to handle pip-compile format where package and via comment are on separate lines
-        current_package = None
-        
-        for i, line in enumerate(lines):
-            stripped_line = line.strip()
-            original_line = line  # Keep original for indentation checking
+        for package_name in resolved_packages:
+            via_info = package_to_via.get(package_name, {'parents': [], 'has_file_reference': False})
+            parents = via_info['parents']
+            has_file_reference = via_info['has_file_reference']
             
-            if not stripped_line or stripped_line.startswith('#') or stripped_line.startswith('-'):
-                # Check if this is a "# via" comment that belongs to the previous package
-                if current_package and original_line.startswith('    #') and 'via' in stripped_line:
-                    via_match = stripped_line.split('via', 1)
-                    if len(via_match) > 1:
-                        via_part = via_match[1].strip()
-                        # Filter out "-r requirements.in" style entries and focus on actual package names
-                        parents = []
-                        for parent in via_part.split(','):
-                            parent = parent.strip()
-                            # Skip file references like "-r requirements.in"
-                            if parent and not parent.startswith('-') and not parent.endswith('.in') and not parent.endswith('.txt'):
-                                parents.append(parent.lower())
-                        
-                        if parents:
-                            dependency_tree[current_package] = parents
-                            classification[current_package] = "transitive"
-                            depth_levels[current_package] = 1  # Will be refined below
-                continue
+            # Determine if package is direct or transitive
+            is_direct = (package_name in all_original_packages or 
+                        (not parents and has_file_reference) or
+                        not parents)  # If no parents found, assume direct
             
-            # Parse package line: "package==1.0.0"
-            try:
-                req = Requirement(stripped_line)
-                package_name = req.name.lower()
-                package_version = stripped_line.split('==')[1] if '==' in stripped_line else ""
+            if is_direct:
+                classification[package_name] = "direct"
+                depth_levels[package_name] = 0
+                dependency_tree[package_name] = []  # Direct dependencies have no parents in tree
+            else:
+                classification[package_name] = "transitive"
+                depth_levels[package_name] = 1  # Will be refined below
                 
-                resolved_packages[package_name] = package_version
-                resolution_details[package_name] = package_version
-                current_package = package_name
+                # Filter parents to only include those that exist in resolved packages
+                valid_parents = []
+                for parent in parents:
+                    # Try exact match first
+                    if parent in resolved_packages:
+                        valid_parents.append(parent)
+                    else:
+                        # Try fuzzy matching for packages with different naming conventions
+                        for resolved_pkg in resolved_packages:
+                            if (parent.replace('-', '_') == resolved_pkg.replace('-', '_') or
+                                parent.replace('_', '-') == resolved_pkg.replace('_', '-')):
+                                valid_parents.append(resolved_pkg)
+                                break
                 
-                # Default classification (may be updated by following via comment)
-                classification[package_name] = "direct" if package_name in all_original_packages else "transitive"
-                depth_levels[package_name] = 0 if package_name in all_original_packages else 1
-                    
-            except Exception as e:
-                print(f"⚠️ Failed to parse requirement line: {stripped_line} - {e}")
-                current_package = None
-                continue
+                dependency_tree[package_name] = valid_parents
         
         # Ensure all original packages are marked as direct
         for package in all_original_packages:
             if package in classification:
                 classification[package] = "direct"
                 depth_levels[package] = 0
+                dependency_tree[package] = []  # Direct dependencies have no parents
         
-        # Calculate proper depth levels
+        # Calculate proper depth levels using the dependency relationships
         depth_levels = self._calculate_depth_levels(dependency_tree, all_original_packages)
+        
+        # Validation: Report any packages that weren't processed
+        missing_packages = set(resolution_details.keys()) - set(classification.keys())
+        if missing_packages:
+            print(f"⚠️ {len(missing_packages)} packages were not classified: {sorted(missing_packages)}")
         
         return {
             "classification": classification,
@@ -662,7 +849,7 @@ class DependencyFileParser:
         
         return depth_levels
     
-    def _generate_conflict_recommendations(self, error_output: str, dependencies: Dict[str, Dict[str, str]]) -> Dict[str, Any]:
+    def _generate_conflict_recommendations(self, error_output: str, dependencies: Dict[str, Dict[str, str]]) -> Dict[str, Any]:  # noqa: ARG002
         """Generate conflict resolution recommendations."""
         conflicts = {
             "error_summary": "Dependency version conflicts detected",
@@ -688,10 +875,12 @@ class DependencyFileParser:
         
         if isinstance(node, ast.List):
             for item in node.elts:
-                if isinstance(item, ast.Str):
-                    result.append(item.s)
-                elif isinstance(item, ast.Constant) and isinstance(item.value, str):
+                # Handle both old ast.Str (deprecated) and new ast.Constant
+                if isinstance(item, ast.Constant) and isinstance(item.value, str):
                     result.append(item.value)
+                elif hasattr(ast, 'Str') and isinstance(item, ast.Str):
+                    # Fallback for older Python versions
+                    result.append(item.s)
         
         return result
 
@@ -705,7 +894,7 @@ def extract_dependencies(project_path: str = ".", config: Optional[Dict] = None,
         cache: VulnerabilityCache instance for SQLite caching
         
     Returns:
-        Dictionary containing dependencies and transitive analysis results
+        Dictionary containing dependencies and dependencies_analysis results
     """
     parser = DependencyFileParser(project_path)
     return parser.extract_dependencies_with_transitive_analysis(config or {}, cache)

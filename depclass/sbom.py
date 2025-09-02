@@ -3,6 +3,8 @@ import json
 import os
 import sys
 
+from decimal import Decimal
+
 from cyclonedx.model.bom import Bom
 from cyclonedx.builder.this import this_component as cdx_lib_component
 from cyclonedx.model.component import Component, ComponentType
@@ -91,13 +93,10 @@ def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
         if not vuln_id:
             continue
 
-        # Enhanced severity and CVSS handling
+        # Use severity already calculated by OSV source (single source of truth)
         cvss_vector = vuln.get("cvss_vector", "")
         score = vuln.get("score")
-        if score and cvss_vector:
-            severity = VulnerabilitySeverity.get_from_cvss_scores(scores=(score,))
-        else:
-            severity = SEVERITY_MAP.get(vuln.get("severity", "").lower(), VulnerabilitySeverity.UNKNOWN)
+        severity = SEVERITY_MAP.get(vuln.get("severity", "").lower(), VulnerabilitySeverity.UNKNOWN)
         
         cwes = vuln.get("cwes") or []
         summary = vuln.get("summary", "")
@@ -122,7 +121,7 @@ def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
         }
         
         if score:
-            rating_kwargs["score"] = score
+            rating_kwargs["score"] = Decimal(score)
         
         if cvss_vector:
             rating_kwargs["vector"] = cvss_vector
