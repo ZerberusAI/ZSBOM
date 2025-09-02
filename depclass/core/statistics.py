@@ -30,8 +30,8 @@ class StatisticsCalculator:
         )
         
         # Vulnerability statistics from validation results
-        if results and "vulnerabilities" in results:
-            vulnerabilities = results["vulnerabilities"]
+        if results and "cve_issues" in results:
+            vulnerabilities = results["cve_issues"]
             statistics["vulnerabilities_found"] = len(vulnerabilities)
             
             # Count by severity
@@ -85,7 +85,7 @@ class StatisticsCalculator:
     
     def calculate_vulnerability_statistics(self, results: dict) -> dict:
         """Calculate vulnerability-specific statistics."""
-        if not results or "vulnerabilities" not in results:
+        if not results or "cve_issues" not in results:
             return {
                 "vulnerabilities_found": 0,
                 "critical_vulnerabilities": 0,
@@ -94,7 +94,7 @@ class StatisticsCalculator:
                 "low_vulnerabilities": 0
             }
         
-        vulnerabilities = results["vulnerabilities"]
+        vulnerabilities = results["cve_issues"]
         severity_counts = {}
         for vuln in vulnerabilities:
             severity = vuln.get("severity", "unknown").lower()

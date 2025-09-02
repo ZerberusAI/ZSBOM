@@ -176,7 +176,7 @@ urllib3==1.26.15
             "runtime": {"requests": "2.28.2", "certifi": "2022.12.7"}
         }
         
-        result = parser._parse_dependency_tree_legacy(pip_output, original_dependencies, {})
+        result = parser._parse_dependency_tree(pip_output, original_dependencies, {})
         
         # Check classification
         assert result["classification"]["requests"] == "direct"

@@ -71,6 +71,9 @@ class UploadOrchestrator:
             scan_response = self._initiate_scan(scan_metadata)
             scan_id = scan_response.scan_id
             
+            # Update scan_metadata.json with server-provided scan_id
+            self._update_scan_metadata_with_server_id(scan_id)
+            
             self.console.print(f"✅ Scan initiated: {scan_id[:8]}...", style="green")
             
             # Phase 2: Get Upload URLs and Upload Files
@@ -107,7 +110,7 @@ class UploadOrchestrator:
             
         except AuthenticationError as e:
             self.console.print(f"🔐 Authentication failed: {e.message}", style="red")
-            self.console.print("Please verify your ZERBERUS_ORG_KEY and ZERBERUS_PROJECT_KEY", style="red")
+            self.console.print("Please verify your ZERBERUS_LICENSE_KEY", style="red")
             return UploadResult(success=False, error=str(e))
             
         except APIConnectionError as e:
@@ -298,3 +301,32 @@ class UploadOrchestrator:
             style = "red"
         
         self.console.print(f"{emoji} {error}", style=style)
+    
+    def _update_scan_metadata_with_server_id(self, server_scan_id: str):
+        """Update scan_metadata.json with the server-provided scan_id"""
+        import json
+        import os
+        
+        metadata_file = "scan_metadata.json"
+        
+        if not os.path.exists(metadata_file):
+            self.console.print(f"⚠️ {metadata_file} not found, skipping scan_id update", style="yellow")
+            return
+        
+        try:
+            # Read current metadata
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+            
+            # Update scan_id
+            old_scan_id = metadata.get('scan_id', 'unknown')
+            metadata['scan_id'] = server_scan_id
+            
+            # Write back to file
+            with open(metadata_file, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            self.console.print(f"📝 Updated scan_id in {metadata_file}: {old_scan_id[:8]}... → {server_scan_id[:8]}...", style="dim")
+            
+        except Exception as e:
+            self.console.print(f"⚠️ Failed to update scan_id in {metadata_file}: {str(e)}", style="yellow")

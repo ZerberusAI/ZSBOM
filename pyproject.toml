@@ -41,11 +41,11 @@ dependencies = [
     "pip-tools==7.4.1",
     "typer==0.16.0",
     "rich==14.1.0",
-    # Phase 5: Trace-AI Upload Dependencies
-    "aiohttp>=3.8.0",        # Async HTTP client for parallel S3 uploads
-    "aiofiles>=23.0.0",      # Async file operations
-    "GitPython>=3.1.0",      # Git repository metadata collection
-    "backoff>=2.2.0"         # Retry logic with exponential backoff
+    "aiohttp>=3.8.0",
+    "aiofiles>=23.0.0",
+    "GitPython>=3.1.0",
+    "backoff>=2.2.0",
+    "cvss==3.6"
 ]
 
 [project.optional-dependencies]

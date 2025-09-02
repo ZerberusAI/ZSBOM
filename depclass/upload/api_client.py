@@ -35,6 +35,8 @@ from .exceptions import (
     ScanStateError
 )
 
+ZERBERUS_SERVER_VERSION="v1"
+
 
 class ZerberusAPIClient:
     """Handles all API interactions with Zerberus server"""
@@ -46,6 +48,7 @@ class ZerberusAPIClient:
         
         # Set reasonable timeouts
         self.session.timeout = config.upload_timeout
+        self.version = ZERBERUS_SERVER_VERSION
     
     def __enter__(self):
         return self
@@ -61,8 +64,8 @@ class ZerberusAPIClient:
         max_value=60
     )
     def initiate_scan(self, request: ScanInitiationRequest) -> ScanInitiationResponse:
-        """POST /trace-ai/scans/initiate"""
-        endpoint = "trace-ai/scans/initiate"
+        """POST /meta/api/v1/trace-ai/scans/initiate"""
+        endpoint = f"meta/api/{self.version}/trace-ai/scans/initiate"
         url = urljoin(self.config.api_url, endpoint)
         
         # Convert request to dict
@@ -109,8 +112,8 @@ class ZerberusAPIClient:
         max_value=60
     )
     def get_upload_urls(self, scan_id: str, files: List[str]) -> UploadUrlsResponse:
-        """POST /trace-ai/scans/{scan_id}/upload-urls"""
-        endpoint = f"trace-ai/scans/{scan_id}/upload-urls"
+        """POST /meta/api/v1/trace-ai/scans/{scan_id}/upload-urls"""
+        endpoint = f"meta/api/{self.version}/trace-ai/scans/{scan_id}/upload-urls"
         url = urljoin(self.config.api_url, endpoint)
         
         payload = {"files": files}
@@ -147,8 +150,8 @@ class ZerberusAPIClient:
         max_value=60
     )
     def acknowledge_completion(self, scan_id: str, request: CompletionRequest) -> CompletionResponse:
-        """POST /trace-ai/scans/{scan_id}/complete"""
-        endpoint = f"trace-ai/scans/{scan_id}/complete"
+        """POST /meta/api/v1/trace-ai/scans/{scan_id}/acknowledge-upload"""
+        endpoint = f"meta/api/{self.version}/trace-ai/scans/{scan_id}/acknowledge-upload"
         url = urljoin(self.config.api_url, endpoint)
         
         payload = {

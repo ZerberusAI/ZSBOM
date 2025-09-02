@@ -1,8 +1,6 @@
 """
 Scanner service implementation for ZSBOM.
 
-Implements the IScannerService interface to orchestrate the complete
-scanning workflow following SOLID principles.
 """
 import json
 import os
@@ -22,10 +20,9 @@ from depclass.rich_utils.ui_helpers import get_console
 from depclass.core.config_manager import ConfigManager
 from depclass.core.file_manager import FileManager
 from depclass.core.statistics import StatisticsCalculator
-from depclass.interfaces.scanner import IScannerService
 
 
-class ScannerService(IScannerService):
+class ScannerService:
     """Concrete implementation of scanner service."""
     
     def __init__(self):
@@ -122,10 +119,8 @@ class ScannerService(IScannerService):
             if cve_data:
                 # Use total packages from dependencies analysis for complete dependency coverage
                 sbom_dependencies = {}
-                for pkg_key, pkg_info in dependencies_analysis.get("dependency_tree", {}).items():
-                    if "==" in pkg_key:
-                        pkg_name, pkg_version = pkg_key.split("==", 1)
-                        sbom_dependencies[pkg_name.lower()] = pkg_version
+                for pkg_key, pkg_version in dependencies_analysis.get("resolution_details", {}).items():
+                    sbom_dependencies[pkg_key.lower()] = pkg_version
                 
                 # Fallback to original dependency data if no resolved versions found
                 if not sbom_dependencies:
@@ -191,7 +186,7 @@ class ScannerService(IScannerService):
         print(f"{direct_count} direct dependencies")
         print(f"{transitive_count} transitive dependencies")
     
-    def _display_risk_results(self, scores: list):
+    def _display_risk_results(self, scores: list, dependencies_analysis: dict):
         """Display risk assessment results."""
         if not scores:
             return
@@ -225,15 +220,18 @@ class ScannerService(IScannerService):
         low_risk = [s for s in scores if s['risk_level'] == 'low']
         
         # Calculate breakdown by dependency type
-        direct_packages = [s for s in scores if s.get('dependency_type') == 'direct']
-        transitive_packages = [s for s in scores if s.get('dependency_type') == 'transitive']
+        dependency_tree = dependencies_analysis.get("dependency_tree", {})
+        total_packages = dependencies_analysis.get("total_packages", 0)
+        
+        direct_count = len([pkg for pkg, info in dependency_tree.items() if info.get("type") == "direct"])
+        transitive_count = total_packages - direct_count
         
         print("📈 Risk Assessment Summary:")
         print(f"   🔴 High Risk: {len(high_risk)} packages")
         print(f"   🟡 Medium Risk: {len(medium_risk)} packages") 
         print(f"   🟢 Low Risk: {len(low_risk)} packages")
-        print(f"   📦 Direct Dependencies: {len(direct_packages)} packages")
-        print(f"   ⬇️ Transitive Dependencies: {len(transitive_packages)} packages")
+        print(f"   📦 Direct Dependencies: {direct_count} packages")
+        print(f"   ⬇️ Transitive Dependencies: {transitive_count} packages")
         print(f"   📊 Total Analyzed: {len(scores)} packages")
         print()
 
@@ -317,7 +315,7 @@ class ScannerService(IScannerService):
                 scores = []
             
             # Display risk results
-            self._display_risk_results(scores)
+            self._display_risk_results(scores, dependencies_analysis)
             
             # Save results
             generated_files = self.save_results(config, results, scores, dependencies_analysis, metadata_collector)
