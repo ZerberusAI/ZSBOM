@@ -138,25 +138,27 @@ class UploadOrchestrator:
         # Determine trigger type based on CI context
         trigger_type = "manual"
         if ci_context.get("is_ci"):
-            if ci_context.get("pr_number"):
-                raw_trigger_type = "pull_request"
-            elif ci_context.get("event_type") == "push":
-                raw_trigger_type = "push"
-            elif ci_context.get("event_type") == "merge_request":
-                raw_trigger_type = "merge_request"
-            else:
-                raw_trigger_type = "automated"
-            
-            # Map to API-expected trigger types
+            # Get the raw trigger type from CI context
+            raw_trigger_type = ci_context.get("event_type", "push")
+
+            # Map CI platform event types to backend's expected enum values
             trigger_type_mapping = {
-                "pull_request": "automated",
-                "push": "automated", 
-                "merge_request": "automated",
-                "schedule": "scheduled",
+                # GitHub Actions events
+                "pull_request": "pull_request",
+                "push": "push",
+                "schedule": "schedule",
                 "workflow_dispatch": "manual",
-                "automated": "automated"
+                
+                # GitLab CI events
+                "merge_request": "pull_request",
+                
+                # Default for other CI events
+                "release": "push",
+                "deployment": "push",
             }
-            trigger_type = trigger_type_mapping.get(raw_trigger_type, "automated")
+            
+            # Default to "push" for unknown CI events (not "automated")
+            trigger_type = trigger_type_mapping.get(raw_trigger_type, "push")
         
         # Parse started_at timestamp
         started_at = None
