@@ -289,18 +289,9 @@ class UploadOrchestrator:
             # Prepare the upload data
             files = {'file': (filename, file_data)}
             data = presigned_url.fields if presigned_url.fields else {}
-            
-            # DEBUG: Print presigned URL and fields
-            print(f"DEBUG: Uploading {filename} to URL: {presigned_url.url}")
-            print(f"DEBUG: Fields: {data}")
-            
+
             # Upload to S3
             response = requests.post(presigned_url.url, data=data, files=files)
-            
-            # DEBUG: Print response details
-            print(f"DEBUG: Response status: {response.status_code}")
-            print(f"DEBUG: Response headers: {dict(response.headers)}")
-            print(f"DEBUG: Response text: {response.text}")
             
             response.raise_for_status()
             
