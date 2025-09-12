@@ -15,6 +15,7 @@ from depclass.validate import validate
 from depclass.metadata import MetadataCollector
 from depclass.rich_utils.ui_helpers import get_console
 from depclass.config_manager import ConfigManager
+from depclass.threshold_checker import ThresholdChecker, ThresholdConfig
 
 
 class ScannerService:
@@ -72,6 +73,13 @@ class ScannerService:
                 metadata_collector.add_error("validation", e)
                 results = {}
             
+            # Check vulnerability thresholds 
+            threshold_result = self._check_vulnerability_thresholds(results)
+            if threshold_result and threshold_result.should_fail_build:
+                exit_code = 1
+                self.console.print(f"\n❌ Build failed: {threshold_result.failure_reason}", style="bold red")
+                metadata_collector.add_error("threshold_check", threshold_result.failure_reason)
+            
             # Assess risk
             try:
                 print("\n🎯 Running risk assessment...")
@@ -115,6 +123,78 @@ class ScannerService:
                     self.console.print(f"⚠️ Failed to save metadata: {str(e)}", style="bold yellow")
         
         return exit_code, metadata_collector.finalize_collection(exit_code) if metadata_collector else {}
+    
+    def _check_vulnerability_thresholds(self, validation_results: dict):
+        """Check vulnerability thresholds from API configuration."""
+        try:
+            # Get threshold configuration from environment variables (set by GitHub Actions)
+            import os
+            api_url = os.getenv("ZERBERUS_API_URL")
+            if not api_url:
+                # No API URL configured, skip threshold checking
+                return None
+            
+            # Load scan metadata to get threshold configuration
+            try:
+                with open("scan_metadata.json", "r") as f:
+                    scan_metadata = json.load(f)
+                    
+                threshold_config_data = scan_metadata.get("threshold_config")
+                if not threshold_config_data or not threshold_config_data.get("enabled", False):
+                    # Threshold checking not enabled
+                    return None
+                    
+                # Create threshold configuration
+                threshold_config = ThresholdConfig(
+                    enabled=threshold_config_data.get("enabled", False),
+                    high_severity_weight=threshold_config_data.get("high_severity_weight", 5),
+                    medium_severity_weight=threshold_config_data.get("medium_severity_weight", 3),
+                    low_severity_weight=threshold_config_data.get("low_severity_weight", 1),
+                    max_score_threshold=threshold_config_data.get("max_score_threshold", 50),
+                    fail_on_critical=threshold_config_data.get("fail_on_critical", True),
+                )
+                
+                # Create threshold checker and check thresholds
+                checker = ThresholdChecker(threshold_config)
+                result = checker.check_thresholds(validation_results)
+                
+                # Display threshold checking results
+                if result:
+                    self._display_threshold_results(result)
+                
+                return result
+                
+            except FileNotFoundError:
+                # No scan metadata file, skip threshold checking
+                return None
+                
+        except Exception as e:
+            self.console.print(f"⚠️ Threshold checking failed: {str(e)}", style="bold yellow")
+            return None
+    
+    def _display_threshold_results(self, result):
+        """Display threshold checking results."""
+        self.console.print("\n🎯 Vulnerability Threshold Check:", style="bold blue")
+        self.console.print("=" * 50)
+        
+        counts = result.vulnerability_counts
+        self.console.print(f"   🔴 Critical: {counts.critical}")
+        self.console.print(f"   🟠 High: {counts.high}")  
+        self.console.print(f"   🟡 Medium: {counts.medium}")
+        self.console.print(f"   🟢 Low: {counts.low}")
+        
+        self.console.print(f"\n   📊 Calculated Score: {result.calculated_score}")
+        self.console.print(f"   🎯 Max Threshold: {result.max_threshold}")
+        
+        if result.should_fail_build:
+            if result.critical_vulnerabilities_found:
+                self.console.print("   ❌ CRITICAL VULNERABILITIES DETECTED - Build will fail", style="bold red")
+            if result.threshold_exceeded:
+                self.console.print(f"   ❌ THRESHOLD EXCEEDED ({result.calculated_score} > {result.max_threshold}) - Build will fail", style="bold red")
+        else:
+            self.console.print("   ✅ Vulnerability thresholds PASSED", style="bold green")
+        
+        print()
     
     def assess_risk(self, config: dict, results: dict, dependency_data: dict, dependencies_analysis: dict) -> list:
         """Assess risk for dependencies."""

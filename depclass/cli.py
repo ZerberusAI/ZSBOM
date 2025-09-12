@@ -5,9 +5,6 @@ import sys
 from typing import Optional
 import typer
 from depclass.scanner import ScannerService
-from depclass.upload_orchestrator import UploadOrchestrator
-from depclass.upload.models import TraceAIConfig
-from depclass.environment_detector import EnvironmentDetector
 
 
 # Initialize Typer app
@@ -38,18 +35,31 @@ def scan_command(
 
 def upload_command(
     license_key: Optional[str] = typer.Option(None, "--license-key", help="Zerberus license key"),
-    api_url: str = typer.Option("https://api.zerberus.com", "--api-url", help="Zerberus API URL"),
+    api_url: Optional[str] = typer.Option(None, "--api-url", help="Zerberus API URL"),
     timeout: int = typer.Option(300, "--timeout", help="Upload timeout in seconds")
 ):
     """Upload scan results to Zerberus platform."""
     
     try:
+        # Import upload modules only when needed (lazy loading)
+        from depclass.upload_orchestrator import UploadOrchestrator
+        from depclass.upload.models import TraceAIConfig
+        from depclass.environment_detector import EnvironmentDetector
+        
         # Get license key from environment if not provided
         if not license_key:
             import os
             license_key = os.getenv("ZERBERUS_LICENSE_KEY")
             if not license_key:
                 typer.echo("❌ License key is required. Use --license-key or set ZERBERUS_LICENSE_KEY environment variable.")
+                sys.exit(1)
+        
+        # Get API URL from environment if not provided
+        if not api_url:
+            import os
+            api_url = os.getenv("ZERBERUS_API_URL")
+            if not api_url:
+                typer.echo("❌ API URL is required. Use --api-url or set ZERBERUS_API_URL environment variable.")
                 sys.exit(1)
         
         # Create configuration
@@ -76,12 +86,17 @@ def upload_command(
         except FileNotFoundError:
             typer.echo("⚠️ No scan metadata found. Proceeding with minimal metadata.")
         
-        # Execute upload
+        # Execute upload (metadata file will be updated automatically with API scan_id)
         orchestrator = UploadOrchestrator(config)
         result = orchestrator.execute_upload_workflow(scan_files, scan_metadata)
         
         if result.success:
             typer.echo(f"✅ Upload successful! Report available at: {result.report_url}")
+            
+            # Check threshold validation results
+            if result.threshold_result and result.threshold_result.should_fail_build:
+                typer.echo(f"❌ Build failed: {result.threshold_result.failure_reason}")
+                sys.exit(1)
         else:
             typer.echo(f"❌ Upload failed: {result.error}")
             sys.exit(1)

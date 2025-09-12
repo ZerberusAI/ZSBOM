@@ -68,6 +68,17 @@ class ScanInitiationRequest:
 
 
 @dataclass
+class ThresholdConfig:
+    """Threshold configuration from API"""
+    enabled: bool
+    high_severity_weight: int
+    medium_severity_weight: int
+    low_severity_weight: int
+    max_score_threshold: int
+    fail_on_critical: bool
+
+
+@dataclass
 class ScanInitiationResponse:
     """Response model for scan initiation"""
     scan_id: str
@@ -75,6 +86,7 @@ class ScanInitiationResponse:
     status: str
     message: str
     created_at: datetime
+    threshold_config: Optional['ThresholdConfig'] = None
 
 
 @dataclass
@@ -140,6 +152,16 @@ class FileUploadResult:
 
 
 @dataclass
+class ThresholdResult:
+    """Result of threshold validation"""
+    threshold_exceeded: bool
+    should_fail_build: bool
+    calculated_score: int
+    max_threshold: int
+    failure_reason: Optional[str] = None
+
+
+@dataclass
 class UploadResult:
     """Overall upload operation result"""
     success: bool
@@ -149,6 +171,7 @@ class UploadResult:
     skip_reason: Optional[str] = None
     file_results: Optional[List[FileUploadResult]] = None
     total_time_seconds: Optional[float] = None
+    threshold_result: Optional[ThresholdResult] = None
 
 
 @dataclass

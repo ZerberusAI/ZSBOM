@@ -21,6 +21,7 @@ from .models import (
     TraceAIConfig,
     ScanInitiationRequest,
     ScanInitiationResponse, 
+    ThresholdConfig,
     UploadUrlsRequest,
     UploadUrlsResponse,
     CompletionRequest,
@@ -93,12 +94,27 @@ class ZerberusAPIClient:
             self._handle_response_errors(response, endpoint)
             
             data = response.json()
+            
+            # Parse threshold config if present
+            threshold_config = None
+            if "threshold_config" in data and data["threshold_config"]:
+                tc_data = data["threshold_config"]
+                threshold_config = ThresholdConfig(
+                    enabled=tc_data["enabled"],
+                    high_severity_weight=tc_data["high_severity_weight"],
+                    medium_severity_weight=tc_data["medium_severity_weight"],
+                    low_severity_weight=tc_data["low_severity_weight"],
+                    max_score_threshold=tc_data["max_score_threshold"],
+                    fail_on_critical=tc_data["fail_on_critical"]
+                )
+            
             return ScanInitiationResponse(
                 scan_id=data["scan_id"],
                 project_id=data["project_id"],
                 status=data["status"],
                 message=data["message"],
-                created_at=datetime.fromisoformat(data["created_at"].replace('Z', '+00:00'))
+                created_at=datetime.fromisoformat(data["created_at"].replace('Z', '+00:00')),
+                threshold_config=threshold_config
             )
             
         except requests.exceptions.RequestException as e:

@@ -23,7 +23,7 @@ class MetadataCollector:
     def __init__(self, config: Dict[str, Any], console: Any = None):
         self.config = config
         self.console = console
-        self.scan_id = str(uuid.uuid4())
+        self.scan_id = str(uuid.uuid4())  # Generate initial scan_id
         self.started_at: Optional[datetime] = None
         self.completed_at: Optional[datetime] = None
         self.errors: List[Dict[str, Any]] = []
@@ -52,6 +52,10 @@ class MetadataCollector:
     def add_generated_file(self, file_path: str):
         """Track a generated file."""
         self.generated_files.append(file_path)
+    
+    def update_scan_id(self, scan_id: str):
+        """Update scan_id with the one from meta-guard service."""
+        self.scan_id = scan_id
     
     def _run_git_command(self, args: List[str]) -> Optional[str]:
         """Run a git command and return output, None if failed."""
