@@ -139,11 +139,24 @@ class UploadOrchestrator:
         trigger_type = "manual"
         if ci_context.get("is_ci"):
             if ci_context.get("pr_number"):
-                trigger_type = "pull_request"
+                raw_trigger_type = "pull_request"
             elif ci_context.get("event_type") == "push":
-                trigger_type = "push"
+                raw_trigger_type = "push"
             elif ci_context.get("event_type") == "merge_request":
-                trigger_type = "merge_request"
+                raw_trigger_type = "merge_request"
+            else:
+                raw_trigger_type = "automated"
+            
+            # Map to API-expected trigger types
+            trigger_type_mapping = {
+                "pull_request": "automated",
+                "push": "automated", 
+                "merge_request": "automated",
+                "schedule": "scheduled",
+                "workflow_dispatch": "manual",
+                "automated": "automated"
+            }
+            trigger_type = trigger_type_mapping.get(raw_trigger_type, "automated")
         
         # Parse started_at timestamp
         started_at = None
