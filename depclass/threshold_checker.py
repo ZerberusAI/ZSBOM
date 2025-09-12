@@ -131,25 +131,32 @@ class ThresholdChecker:
         """
         counts = VulnerabilityCounts()
         
-        # Navigate validation report structure
-        # Expected structure: validation_report -> packages -> [package] -> vulnerabilities -> [vuln] -> severity
-        packages = validation_report.get("packages", {})
+        self.logger.debug(f"Extracting vulnerability counts from report structure: {list(validation_report.keys())}")
         
-        for package_name, package_data in packages.items():
-            vulnerabilities = package_data.get("vulnerabilities", [])
+        # Handle the actual ZSBOM validation report structure
+        # Actual structure: validation_report -> cve_issues -> [vuln] -> severity
+        cve_issues = validation_report.get("cve_issues", [])
+        
+        self.logger.debug(f"Found {len(cve_issues)} CVE issues in validation report")
+        
+        for vuln in cve_issues:
+            severity = vuln.get("severity", "").lower()
+            package_name = vuln.get("package_name", "unknown")
             
-            for vuln in vulnerabilities:
-                severity = vuln.get("severity", "").lower()
-                
-                if severity == "critical":
-                    counts.critical += 1
-                elif severity == "high":
-                    counts.high += 1
-                elif severity == "medium":
-                    counts.medium += 1
-                elif severity == "low":
-                    counts.low += 1
-                    
+            self.logger.debug(f"Processing vulnerability: {package_name} - {severity.upper()}")
+            
+            if severity == "critical":
+                counts.critical += 1
+            elif severity == "high":
+                counts.high += 1
+            elif severity == "medium":
+                counts.medium += 1
+            elif severity == "low":
+                counts.low += 1
+        
+        self.logger.info(f"Vulnerability counts - Critical: {counts.critical}, High: {counts.high}, "
+                        f"Medium: {counts.medium}, Low: {counts.low}")
+        
         return counts
     
     def _calculate_weighted_score(self, vuln_counts: VulnerabilityCounts) -> int:
