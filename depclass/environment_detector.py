@@ -18,6 +18,8 @@ class EnvironmentDetector:
             "risk_report.json": "risk_report.json",
             "dependencies.json": "dependencies.json", 
             "sbom.json": "sbom.json",
+            "sbom.json.sig": "sbom.json.sig",
+            "sbom.json.cert": "sbom.json.cert",
             "validation_report.json": "validation_report.json",
             "scan_metadata.json": "scan_metadata.json"
         }
