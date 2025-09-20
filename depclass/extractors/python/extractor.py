@@ -1,0 +1,884 @@
+"""
+Python ecosystem dependency extractor.
+
+Handles Python dependency files like pyproject.toml, requirements.txt, setup.py, etc.
+Includes transitive dependency analysis using pip-tools.
+"""
+
+import os
+import re
+import ast
+import configparser
+import importlib.metadata
+import subprocess
+import hashlib
+import json
+import tempfile
+import time
+from typing import Dict, List, Optional, Tuple, Any
+from pathlib import Path
+
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    try:
+        import tomli as tomllib  # Fallback for older Python versions
+    except ImportError:
+        tomllib = None
+
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+from rich.console import Console
+from rich.spinner import Spinner
+from rich.live import Live
+
+from ..base import BaseExtractor
+
+
+class PythonExtractor(BaseExtractor):
+    """Python dependency extractor using pip-tools for transitive analysis."""
+
+    def __init__(self, project_path: str = "."):
+        super().__init__(project_path)
+        self.file_priority = [
+            "pyproject.toml",
+            "requirements.txt",
+            "setup.py",
+            "setup.cfg",
+            "Pipfile"
+        ]
+
+    @property
+    def ecosystem_name(self) -> str:
+        return "python"
+
+    @property
+    def supported_files(self) -> List[str]:
+        return [
+            "pyproject.toml",
+            "requirements.txt",
+            "setup.py",
+            "setup.cfg",
+            "Pipfile",
+            "requirements*.txt",
+            "*requirements.txt"
+        ]
+
+    def can_extract(self) -> bool:
+        """Check if this project contains Python dependency files."""
+        return len(self.get_dependency_files()) > 0
+
+    def extract_dependencies(
+        self,
+        config: Optional[Dict] = None,
+        cache=None
+    ) -> Dict[str, Any]:
+        """Extract Python dependencies with transitive analysis."""
+        config = self.validate_config(config)
+
+        # Extract base dependencies
+        dependencies = self._extract_dependencies_from_files()
+
+        # Initialize dependencies analysis result
+        dependencies_result = {
+            "total_packages": 0,
+            "dependency_tree": {},
+            "package_files": []
+        }
+
+        try:
+            # Check if pip-tools is available
+            if not self._check_pip_tools_available():
+                print("⚠️ pip-tools not available. Install with: pip install pip-tools>=7.4.1")
+                return self._create_unified_result(dependencies, dependencies_result)
+
+            # Consolidate requirements from all dependency files
+            consolidated_requirements = self._consolidate_requirements(dependencies, config)
+            if not consolidated_requirements:
+                return self._create_unified_result(dependencies, dependencies_result)
+
+            # Run pip-compile to resolve transitive dependencies
+            resolved_output = self._run_pip_compile_with_spinner(consolidated_requirements, config, cache)
+
+            # Parse the dependency tree and build new format
+            dependencies_data = self._build_dependencies_structure(resolved_output, dependencies, config)
+            dependencies_result.update(dependencies_data)
+
+        except subprocess.CalledProcessError as e:
+            if ("could not find a version that satisfies" in str(e.stderr).lower() or
+                "no matching distribution" in str(e.stderr).lower()):
+                if not config.get("ignore_conflicts", False):
+                    print(f"❌ Dependency conflicts detected. Use --ignore-conflicts to continue with degraded analysis.")
+                    print(f"Error: {e.stderr}")
+                    raise RuntimeError("Dependency resolution failed due to conflicts")
+            else:
+                print(f"⚠️ Failed to resolve dependencies: {e}")
+
+        except Exception as e:
+            print(f"⚠️ Transitive analysis failed: {e}")
+
+        return self._create_unified_result(dependencies, dependencies_result)
+
+    def _create_unified_result(self, dependencies: Dict[str, Dict[str, str]], dependencies_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Create unified result format for multi-ecosystem merging."""
+        # Ensure package_files have ecosystem tags
+        package_files = dependencies_result.get("package_files", [])
+        for package_file in package_files:
+            package_file["ecosystem"] = "python"
+
+        return {
+            "ecosystems": {
+                "python": {
+                    "dependencies": dependencies,
+                    "dependencies_analysis": dependencies_result
+                }
+            },
+            "ecosystems_detected": ["python"],
+            "total_packages": dependencies_result.get("total_packages", 0)
+        }
+
+    def _extract_dependencies_from_files(self) -> Dict[str, Dict[str, str]]:
+        """Extract dependencies from all found dependency files."""
+        dependencies = {}
+
+        # Parse each dependency file format
+        for file_name in self.file_priority:
+            file_path = self.project_path / file_name
+            if file_path.exists():
+                try:
+                    deps = self._parse_file(file_path)
+                    if deps:
+                        dependencies[file_name] = deps
+                except Exception as e:
+                    print(f"⚠️ Error parsing {file_name}: {e}")
+
+        return dependencies
+
+    def _parse_file(self, file_path: Path) -> Optional[Dict[str, str]]:
+        """Parse a single dependency file."""
+        if file_path.name == "requirements.txt":
+            return self._parse_requirements_txt(file_path)
+        elif file_path.name == "pyproject.toml":
+            return self._parse_pyproject_toml(file_path)
+        elif file_path.name == "setup.py":
+            return self._parse_setup_py(file_path)
+        elif file_path.name == "setup.cfg":
+            return self._parse_setup_cfg(file_path)
+        elif file_path.name == "Pipfile":
+            return self._parse_pipfile(file_path)
+
+        return None
+
+    def _parse_requirements_txt(self, file_path: Path) -> Dict[str, str]:
+        """Parse requirements.txt file."""
+        dependencies = {}
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+
+                    # Skip empty lines and comments
+                    if not line or line.startswith('#'):
+                        continue
+
+                    # Remove inline comments
+                    line = line.split('#', 1)[0].strip()
+
+                    # Skip -r includes, -e editable installs, etc.
+                    if line.startswith('-'):
+                        continue
+
+                    # Parse requirement
+                    try:
+                        req = Requirement(line)
+                        dependencies[req.name.lower()] = str(req.specifier) if req.specifier else ""
+                    except Exception as e:
+                        print(f"⚠️ Error parsing requirement '{line}' at line {line_num}: {e}")
+
+        except Exception as e:
+            print(f"⚠️ Error reading {file_path}: {e}")
+
+        return dependencies
+
+    def _parse_pyproject_toml(self, file_path: Path) -> Dict[str, str]:
+        """Parse pyproject.toml file (both PEP 621 and Poetry formats)."""
+        if not tomllib:
+            print("⚠️ TOML parsing library not available")
+            return {}
+
+        dependencies = {}
+
+        try:
+            with open(file_path, 'rb') as f:
+                data = tomllib.load(f)
+
+            # Try PEP 621 format first
+            project_deps = data.get("project", {}).get("dependencies", [])
+            for dep in project_deps:
+                try:
+                    req = Requirement(dep)
+                    dependencies[req.name.lower()] = str(req.specifier) if req.specifier else ""
+                except Exception as e:
+                    print(f"⚠️ Error parsing PEP 621 dependency '{dep}': {e}")
+
+            # Try Poetry format
+            poetry_deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+            for name, spec in poetry_deps.items():
+                if name == "python":  # Skip Python version constraint
+                    continue
+
+                # Convert Poetry format to standard format
+                if isinstance(spec, str):
+                    # Handle Poetry version specs like "^1.0.0" or ">=1.0.0"
+                    dependencies[name.lower()] = self._convert_poetry_spec(spec)
+                elif isinstance(spec, dict):
+                    # Handle Poetry dict format: {"version": "^1.0.0", "optional": true}
+                    version_spec = spec.get("version", "")
+                    if version_spec and not spec.get("optional", False):
+                        dependencies[name.lower()] = self._convert_poetry_spec(version_spec)
+
+        except Exception as e:
+            print(f"⚠️ Error parsing {file_path}: {e}")
+
+        return dependencies
+
+    def _parse_setup_py(self, file_path: Path) -> Dict[str, str]:
+        """Parse setup.py file."""
+        dependencies = {}
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Parse AST to find setup() call
+            tree = ast.parse(content)
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and hasattr(node.func, 'id') and node.func.id == 'setup':
+                    # Find install_requires argument
+                    for keyword in node.keywords:
+                        if keyword.arg == 'install_requires':
+                            deps = self._extract_list_from_ast(keyword.value)
+                            for dep in deps:
+                                try:
+                                    req = Requirement(dep)
+                                    dependencies[req.name.lower()] = str(req.specifier) if req.specifier else ""
+                                except Exception as e:
+                                    print(f"⚠️ Error parsing setup.py dependency '{dep}': {e}")
+
+        except Exception as e:
+            print(f"⚠️ Error parsing {file_path}: {e}")
+
+        return dependencies
+
+    def _parse_setup_cfg(self, file_path: Path) -> Dict[str, str]:
+        """Parse setup.cfg file."""
+        dependencies = {}
+
+        try:
+            config = configparser.ConfigParser()
+            config.read(file_path)
+
+            # Look for install_requires in [options] section
+            if config.has_section('options') and config.has_option('options', 'install_requires'):
+                install_requires = config.get('options', 'install_requires')
+
+                # Parse multi-line install_requires
+                for line in install_requires.strip().split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        try:
+                            req = Requirement(line)
+                            dependencies[req.name.lower()] = str(req.specifier) if req.specifier else ""
+                        except Exception as e:
+                            print(f"⚠️ Error parsing setup.cfg dependency '{line}': {e}")
+
+        except Exception as e:
+            print(f"⚠️ Error parsing {file_path}: {e}")
+
+        return dependencies
+
+    def _parse_pipfile(self, file_path: Path) -> Dict[str, str]:
+        """Parse Pipfile."""
+        if not tomllib:
+            print("⚠️ TOML parsing library not available for Pipfile")
+            return {}
+
+        dependencies = {}
+
+        try:
+            with open(file_path, 'rb') as f:
+                data = tomllib.load(f)
+
+            # Parse [packages] section
+            packages = data.get("packages", {})
+            for name, spec in packages.items():
+                if isinstance(spec, str):
+                    if spec == "*":
+                        dependencies[name.lower()] = ""
+                    else:
+                        # Convert Pipfile format to standard format
+                        dependencies[name.lower()] = self._convert_pipfile_spec(spec)
+                elif isinstance(spec, dict):
+                    version_spec = spec.get("version", "")
+                    if version_spec and version_spec != "*":
+                        dependencies[name.lower()] = self._convert_pipfile_spec(version_spec)
+
+        except Exception as e:
+            print(f"⚠️ Error parsing {file_path}: {e}")
+
+        return dependencies
+
+    def _convert_poetry_spec(self, spec: str) -> str:
+        """Convert Poetry version specification to standard format."""
+        if spec.startswith("^"):
+            # Caret constraint: ^1.2.3 means >=1.2.3,<2.0.0
+            version = spec[1:]
+            try:
+                v = Version(version)
+                return f">={version},<{v.major + 1}.0.0"
+            except:
+                return spec
+        elif spec.startswith("~"):
+            # Tilde constraint: ~1.2.3 means >=1.2.3,<1.3.0
+            version = spec[1:]
+            try:
+                v = Version(version)
+                return f">={version},<{v.major}.{v.minor + 1}.0"
+            except:
+                return spec
+        else:
+            # Standard constraint
+            return spec
+
+    def _convert_pipfile_spec(self, spec: str) -> str:
+        """Convert Pipfile version specification to standard format."""
+        # Pipfile uses mostly standard format, but may have quotes
+        return spec.strip('"\'')
+
+    def _extract_list_from_ast(self, node: ast.AST) -> List[str]:
+        """Extract list of strings from AST node."""
+        result = []
+
+        if isinstance(node, ast.List):
+            for item in node.elts:
+                # Handle both old ast.Str (deprecated) and new ast.Constant
+                if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                    result.append(item.value)
+                elif hasattr(ast, 'Str') and isinstance(item, ast.Str):
+                    # Fallback for older Python versions
+                    result.append(item.s)
+
+        return result
+
+    def _check_pip_tools_available(self) -> bool:
+        """Check if pip-tools is available."""
+        try:
+            result = subprocess.run(["pip-compile", "--version"],
+                                  capture_output=True, text=True, timeout=10)
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+
+    def _consolidate_requirements(self, dependencies: Dict[str, Dict[str, str]], config: Dict) -> str:
+        """Consolidate requirements from multiple files using file priority."""
+        consolidated = {}
+        conflicts = {}
+
+        # Use existing file priority from config or default
+        file_priority = config.get("version_consistency", {}).get("file_priority", self.file_priority)
+
+        # Process files in priority order (reverse to get highest priority last)
+        for file_name in reversed(file_priority):
+            if file_name in dependencies and dependencies[file_name]:
+                for package, version_spec in dependencies[file_name].items():
+                    package_lower = package.lower()
+
+                    if package_lower in consolidated:
+                        # Record conflict if different specifications
+                        if consolidated[package_lower] != version_spec:
+                            if package_lower not in conflicts:
+                                conflicts[package_lower] = []
+                            conflicts[package_lower].append({
+                                "file": file_name,
+                                "spec": version_spec,
+                                "previous_spec": consolidated[package_lower]
+                            })
+
+                    # Higher priority file overwrites (since we're going in reverse)
+                    consolidated[package_lower] = version_spec
+
+        # Generate requirements.txt format string
+        requirements_lines = []
+        for package, version_spec in consolidated.items():
+            if version_spec:
+                requirements_lines.append(f"{package}{version_spec}")
+            else:
+                requirements_lines.append(package)
+
+        return "\n".join(requirements_lines)
+
+    def _get_cache_key(self, requirements_content: str, config: Dict) -> str:
+        """Generate cache key based on requirements and config."""
+        # Include private repo config in cache key
+        repo_config = config.get("private_repositories", {})
+        cache_data = {
+            "requirements": requirements_content,
+            "index_url": repo_config.get("index_url", ""),
+            "extra_index_urls": repo_config.get("extra_index_urls", []),
+            "trusted_hosts": repo_config.get("trusted_hosts", []),
+            "find_links": repo_config.get("find_links", []),
+            "no_index": repo_config.get("no_index", False)
+        }
+        return hashlib.sha256(json.dumps(cache_data, sort_keys=True).encode()).hexdigest()
+
+    def _build_pip_compile_args(self, config: Dict) -> List[str]:
+        """Build pip-compile arguments with private repository support."""
+        args = ["pip-compile", "--dry-run", "--quiet", "--strip-extras", "--no-build-isolation"]
+
+        # Add private repository configuration
+        repo_config = config.get("private_repositories", {})
+
+        if repo_config.get("index_url"):
+            args.extend(["--index-url", repo_config["index_url"]])
+
+        for extra_url in repo_config.get("extra_index_urls", []):
+            args.extend(["--extra-index-url", extra_url])
+
+        for trusted_host in repo_config.get("trusted_hosts", []):
+            args.extend(["--trusted-host", trusted_host])
+
+        for find_link in repo_config.get("find_links", []):
+            args.extend(["--find-links", find_link])
+
+        if repo_config.get("no_index", False):
+            args.append("--no-index")
+
+        return args
+
+    def _run_pip_compile_with_spinner(self, requirements_content: str, config: Dict, cache=None) -> str:
+        """Wrapper that adds Rich spinner to pip-compile execution."""
+        console = Console()
+        with Live(Spinner("dots", text="[bold] Resolving transitive dependencies[/bold]"),
+                  console=console, refresh_per_second=4) as live:
+            try:
+                result = self._run_pip_compile_with_cache(requirements_content, config, cache)
+                live.update("[bold][green]✔[/green] Resolved transitive dependencies[/bold]")
+                time.sleep(0.5)  # Brief pause to show completion
+                return result
+            except Exception as e:
+                live.update("[bold red]✗ Failed to resolve dependencies[/bold red]")
+                time.sleep(0.5)
+                raise
+
+    def _run_pip_compile_with_cache(self, requirements_content: str, config: Dict, cache=None) -> str:
+        """Run pip-compile with SQLite caching and retry logic."""
+        cache_key = self._get_cache_key(requirements_content, config)
+
+        # Check cache if available and enabled
+        if cache and config.get("caching", {}).get("enabled", False):
+            ttl_hours = config.get("caching", {}).get("ttl_hours", 24)
+            cached_result = cache.get_cached_pip_compile(cache_key, ttl_hours)
+            if cached_result:
+                print(f"📋 Using cached dependency resolution")
+                return cached_result
+
+        # Create temporary requirements file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
+            temp_file.write(requirements_content)
+            temp_file_path = temp_file.name
+
+        # Create temporary output file for pip-compile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as output_file:
+            output_file_path = output_file.name
+
+        try:
+            # Build pip-compile command
+            args = self._build_pip_compile_args(config)
+            args.extend(["--output-file", output_file_path])
+            args.append(temp_file_path)
+
+            # Get timeout from config
+            timeout = config.get("transitive_analysis", {}).get("timeout", 120)
+
+            # Run pip-compile with retry logic
+            for attempt in range(3):
+                try:
+                    result = subprocess.run(
+                        args,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        check=True
+                    )
+
+                    # With --dry-run, pip-compile outputs to stderr instead of the output file
+                    output_content = result.stderr if result.stderr else result.stdout
+
+                    # If neither stderr nor stdout has content, try reading the output file
+                    if not output_content.strip():
+                        try:
+                            with open(output_file_path, 'r', encoding='utf-8') as f:
+                                output_content = f.read()
+                        except Exception:
+                            pass
+
+                    # Cache successful result if cache is available and enabled
+                    if cache and config.get("caching", {}).get("enabled", False):
+                        requirements_hash = hashlib.sha256(requirements_content.encode()).hexdigest()
+                        cache.cache_pip_compile_result(cache_key, requirements_hash, output_content)
+
+                    return output_content
+
+                except subprocess.TimeoutExpired:
+                    if attempt < 2:
+                        print(f"⏱️ Timeout on attempt {attempt + 1}, retrying...")
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                    else:
+                        raise
+                except subprocess.CalledProcessError as e:
+                    # Add better error reporting
+                    error_msg = f"pip-compile failed with exit code {e.returncode}"
+                    if e.stderr:
+                        error_msg += f"\nstderr: {e.stderr}"
+                    if e.stdout:
+                        error_msg += f"\nstdout: {e.stdout}"
+                    print(f"⚠️ Error on attempt {attempt + 1}: {error_msg}")
+
+                    # Don't retry on resolution conflicts
+                    if attempt < 2 and "could not find a version" not in str(e.stderr).lower():
+                        print(f"⚠️ Retrying...")
+                        time.sleep(2 ** attempt)
+                    else:
+                        raise
+
+        finally:
+            # Clean up temporary files
+            try:
+                os.unlink(temp_file_path)
+            except OSError:
+                pass
+            try:
+                os.unlink(output_file_path)
+            except OSError:
+                pass
+
+    def _build_dependencies_structure(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:
+        """Build the new dependencies.json structure from pip-compile output."""
+        # First parse the old format to get the data we need
+        tree_data = self._parse_dependency_tree(pip_output, original_dependencies, config)
+
+        classification = tree_data["classification"]
+        dependency_tree = tree_data["dependency_tree"]
+        depth_levels = tree_data["depth_levels"]
+        direct_sources = tree_data["direct_sources"]
+        resolution_details = tree_data["resolution_details"]
+
+        # Build hierarchical dependency tree
+        hierarchical_tree = {}
+
+        # Process ALL packages from resolution_details to ensure none are missing
+        for package in resolution_details:
+            package_version = resolution_details.get(package, "")
+            package_key = f"{package}=={package_version}" if package_version else package
+
+            # Get classification (default to transitive if not found)
+            package_type = classification.get(package, "transitive")
+
+            if package_type == "direct":
+                hierarchical_tree[package_key] = {
+                    "type": "direct",
+                    "declared_in": direct_sources.get(package, []),
+                    "children": self._build_children(package, dependency_tree, depth_levels, resolution_details, classification)
+                }
+            # Note: Transitive packages will be added as children through the _build_children method
+            # We don't add them at root level here since they should appear under their parents
+
+        # Validation: Ensure all packages are accounted for in the tree
+        packages_in_tree = set()
+        self._collect_all_packages_from_tree(hierarchical_tree, packages_in_tree)
+
+        missing_from_tree = set(resolution_details.keys()) - packages_in_tree
+        if missing_from_tree:
+            print(f"⚠️ Adding {len(missing_from_tree)} orphaned packages to tree root")
+            for orphaned_pkg in missing_from_tree:
+                package_version = resolution_details.get(orphaned_pkg, "")
+                package_key = f"{orphaned_pkg}=={package_version}" if package_version else orphaned_pkg
+
+                hierarchical_tree[package_key] = {
+                    "type": classification.get(orphaned_pkg, "transitive"),
+                    "declared_in": direct_sources.get(orphaned_pkg, []),
+                    "children": {}
+                }
+
+        # Build package_files structure
+        package_files = []
+        for file_name, packages in original_dependencies.items():
+            if file_name != "runtime" and packages:  # Skip runtime packages
+                file_packages = []
+                for package, version_spec in packages.items():
+                    if version_spec:
+                        file_packages.append(f"{package}{version_spec}")
+                    else:
+                        file_packages.append(package)
+
+                if file_packages:
+                    package_files.append({
+                        "path": file_name,
+                        "packages": file_packages
+                    })
+
+        return {
+            "total_packages": len(resolution_details),
+            "dependency_tree": hierarchical_tree,
+            "package_files": package_files,
+            "resolution_details": resolution_details
+        }
+
+    def _build_children(self, parent_package: str, dependency_tree: Dict[str, List[str]],
+                       depth_levels: Dict[str, int], resolution_details: Dict[str, str],
+                       classification: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+        """Recursively build children structure for a package."""
+        children = {}
+
+        # Find all packages that have this package as a parent
+        for package, parents in dependency_tree.items():
+            if parent_package in parents:
+                package_version = resolution_details.get(package, "")
+                package_key = f"{package}=={package_version}" if package_version else package
+
+                child_info = {
+                    "type": classification.get(package, "transitive"),
+                    "depth": depth_levels.get(package, 1)
+                }
+
+                # Recursively build children of this child
+                child_children = self._build_children(package, dependency_tree, depth_levels, resolution_details, classification)
+                if child_children:
+                    child_info["children"] = child_children
+
+                children[package_key] = child_info
+
+        return children
+
+    def _collect_all_packages_from_tree(self, tree: Dict[str, Dict[str, Any]], packages_set: set) -> None:
+        """Recursively collect all package names from the dependency tree."""
+        for package_key, package_info in tree.items():
+            # Extract package name from 'package==version' format
+            package_name = package_key.split('==')[0].lower()
+            packages_set.add(package_name)
+
+            # Recursively collect from children
+            children = package_info.get('children', {})
+            if children:
+                self._collect_all_packages_from_tree(children, packages_set)
+
+    def _parse_dependency_tree(self, pip_output: str, original_dependencies: Dict[str, Dict[str, str]], config: Dict) -> Dict[str, Any]:  # noqa: ARG002
+        """Parse pip-compile output to build dependency tree and classification."""
+        lines = pip_output.strip().split('\n')
+
+        # Find direct dependencies (those that appear in original requirements)
+        all_original_packages = set()
+        direct_sources = {}
+
+        for file_name, packages in original_dependencies.items():
+            if file_name != "runtime":  # Skip runtime packages for direct classification
+                for package in packages.keys():
+                    package_lower = package.lower()
+                    all_original_packages.add(package_lower)
+                    if package_lower not in direct_sources:
+                        direct_sources[package_lower] = []
+                    direct_sources[package_lower].append(file_name)
+
+        # First pass: Parse all packages and their versions
+        resolved_packages = {}
+        resolution_details = {}
+        package_to_via = {}  # Map package to its via relationships
+
+        # Parse the pip-compile output in a more robust way
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+            stripped_line = line.strip()
+
+            # Skip empty lines and header comments
+            if not stripped_line or stripped_line.startswith('#') and 'via' not in stripped_line:
+                i += 1
+                continue
+
+            # Check if this is a package line (has == or just package name)
+            if not stripped_line.startswith('#') and not stripped_line.startswith('-'):
+                try:
+                    # Try to parse as requirement
+                    req = Requirement(stripped_line)
+                    package_name = req.name.lower()
+                    package_version = ""
+
+                    # Extract version from the line
+                    if '==' in stripped_line:
+                        package_version = stripped_line.split('==')[1].strip()
+
+                    resolved_packages[package_name] = package_version
+                    resolution_details[package_name] = package_version
+
+                    # Look ahead for via comments
+                    j = i + 1
+                    via_lines = []
+
+                    while j < len(lines):
+                        next_line = lines[j].strip()
+                        if next_line.startswith('#') and 'via' in next_line:
+                            via_lines.append(next_line)
+                            j += 1
+                        elif next_line.startswith('#') and not 'via' in next_line:
+                            # Skip non-via comments
+                            j += 1
+                        elif not next_line:
+                            # Skip empty lines
+                            j += 1
+                        else:
+                            # Found next package or end of via comments
+                            break
+
+                    # Process all via lines for this package
+                    all_parents = []
+                    has_file_reference = False
+
+                    for via_line in via_lines:
+                        if 'via' in via_line:
+                            via_part = via_line.split('via', 1)[1].strip()
+
+                            # Handle multi-line via content
+                            for parent_line in via_part.split('\n'):
+                                for parent in parent_line.split(','):
+                                    parent = parent.strip()
+                                    if parent:
+                                        # Clean up parent names
+                                        parent = parent.replace('#', '').strip()
+
+                                        # Check if this is a file reference
+                                        if (parent.startswith('-r ') or
+                                            parent.endswith('.in') or
+                                            parent.endswith('.txt') or
+                                            parent.startswith('./') or
+                                            'requirements' in parent):
+                                            has_file_reference = True
+                                        else:
+                                            # This is a package parent - normalize the name
+                                            parent_clean = parent.lower().replace('-', '_')
+                                            if parent_clean and parent_clean != package_name:
+                                                all_parents.append(parent_clean)
+
+                    # Store the via relationship
+                    package_to_via[package_name] = {
+                        'parents': list(set(all_parents)),  # Remove duplicates
+                        'has_file_reference': has_file_reference
+                    }
+
+                    i = j  # Skip to after the via comments
+                    continue
+
+                except Exception as e:
+                    print(f"⚠️ Failed to parse requirement line: {stripped_line} - {e}")
+                    i += 1
+                    continue
+
+            i += 1
+
+        # Second pass: Build dependency tree and classification
+        dependency_tree = {}
+        classification = {}
+        depth_levels = {}
+
+        for package_name in resolved_packages:
+            via_info = package_to_via.get(package_name, {'parents': [], 'has_file_reference': False})
+            parents = via_info['parents']
+            has_file_reference = via_info['has_file_reference']
+
+            # Determine if package is direct or transitive
+            is_direct = (package_name in all_original_packages or
+                        (not parents and has_file_reference) or
+                        not parents)  # If no parents found, assume direct
+
+            if is_direct:
+                classification[package_name] = "direct"
+                depth_levels[package_name] = 0
+                dependency_tree[package_name] = []  # Direct dependencies have no parents in tree
+            else:
+                classification[package_name] = "transitive"
+                depth_levels[package_name] = 1  # Will be refined below
+
+                # Filter parents to only include those that exist in resolved packages
+                valid_parents = []
+                for parent in parents:
+                    # Try exact match first
+                    if parent in resolved_packages:
+                        valid_parents.append(parent)
+                    else:
+                        # Try fuzzy matching for packages with different naming conventions
+                        for resolved_pkg in resolved_packages:
+                            if (parent.replace('-', '_') == resolved_pkg.replace('-', '_') or
+                                parent.replace('_', '-') == resolved_pkg.replace('_', '-')):
+                                valid_parents.append(resolved_pkg)
+                                break
+
+                dependency_tree[package_name] = valid_parents
+
+        # Ensure all original packages are marked as direct
+        for package in all_original_packages:
+            if package in classification:
+                classification[package] = "direct"
+                depth_levels[package] = 0
+                dependency_tree[package] = []  # Direct dependencies have no parents
+
+        # Calculate proper depth levels using the dependency relationships
+        depth_levels = self._calculate_depth_levels(dependency_tree, all_original_packages)
+
+        # Validation: Report any packages that weren't processed
+        missing_packages = set(resolution_details.keys()) - set(classification.keys())
+        if missing_packages:
+            print(f"⚠️ {len(missing_packages)} packages were not classified: {sorted(missing_packages)}")
+
+        return {
+            "classification": classification,
+            "dependency_tree": dependency_tree,
+            "depth_levels": depth_levels,
+            "direct_sources": direct_sources,
+            "resolution_details": resolution_details
+        }
+
+    def _calculate_depth_levels(self, dependency_tree: Dict[str, List[str]], direct_packages: set) -> Dict[str, int]:
+        """Calculate depth levels for packages in dependency tree."""
+        depth_levels = {}
+
+        # Set direct packages to depth 0
+        for package in direct_packages:
+            depth_levels[package] = 0
+
+        # Calculate depths iteratively
+        changed = True
+        max_iterations = 10  # Prevent infinite loops
+        iteration = 0
+
+        while changed and iteration < max_iterations:
+            changed = False
+            iteration += 1
+
+            for package, parents in dependency_tree.items():
+                if package not in depth_levels:
+                    # Find minimum parent depth
+                    parent_depths = []
+                    for parent in parents:
+                        parent = parent.lower()
+                        if parent in depth_levels:
+                            parent_depths.append(depth_levels[parent])
+
+                    if parent_depths:
+                        new_depth = min(parent_depths) + 1
+                        depth_levels[package] = new_depth
+                        changed = True
+
+        return depth_levels
