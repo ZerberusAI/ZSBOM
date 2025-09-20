@@ -53,8 +53,8 @@ pip install .
 You can **integrate ZSBOM** into your existing Python project by:
 1. Importing it as a module:
    ```python
-   from depclass.extract import extract_dependencies
-   deps = extract_dependencies()
+   from depclass.extract import extract
+   deps = extract()
    print(deps)
    ```
 2. Running it as a standalone CLI tool:

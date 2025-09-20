@@ -22,6 +22,32 @@ from cyclonedx.schema import SchemaVersion
 from cyclonedx.exception import MissingOptionalDependencyException
 from packageurl import PackageURL
 
+
+def _get_purl_type(ecosystem: str) -> str:
+    """
+    Map ecosystem name to PackageURL type.
+
+    Args:
+        ecosystem: Ecosystem name (e.g., "python", "npm", "java")
+
+    Returns:
+        PackageURL type string
+    """
+    ecosystem_to_purl = {
+        "python": "pypi",
+        "npm": "npm",
+        "java": "maven",
+        "maven": "maven",
+        "go": "golang",
+        "golang": "golang",
+        "rust": "cargo",
+        "cargo": "cargo",
+        "ruby": "gem",
+    }
+
+    return ecosystem_to_purl.get(ecosystem.lower(), "generic")
+
+
 SEVERITY_MAP = {
     "critical": VulnerabilitySeverity.CRITICAL,
     "high": VulnerabilitySeverity.HIGH,
@@ -33,21 +59,46 @@ SEVERITY_MAP = {
 
 
 
-def generate(dependencies: dict, cve_data: dict, config: dict):
+def generate(transitive_analysis: dict, cve_data: dict, config: dict, ecosystem_mapping: dict = None):
+    """Generate SBOM from ecosystem-aware transitive analysis data.
+
+    Args:
+        transitive_analysis: Transitive analysis results with nested ecosystem data
+        cve_data: CVE validation data with ecosystem-tagged issues
+        config: Configuration dictionary
+        ecosystem_mapping: Legacy parameter (deprecated, maintained for compatibility)
+    """
     bom = Bom()
     bom.metadata.tools.components.add(cdx_lib_component())
     component_map = {}
 
-    # Add components to BOM
-    for dep, ver in dependencies.items():
-        component = Component(
-            name=dep,
-            version=ver,
-            type=ComponentType.LIBRARY,
-            purl=PackageURL(type="pypi", name=dep, version=ver)
-        )
-        bom.components.add(component)
-        component_map[f"{dep.lower()}=={ver}"] = component
+    # Extract ecosystem data from transitive analysis
+    ecosystems_data = transitive_analysis.get("resolution_details", {})
+
+    if not ecosystems_data:
+        print("⚠️ No ecosystem data found in transitive analysis")
+        return
+
+    # Add components to BOM for each ecosystem
+    for ecosystem, packages in ecosystems_data.items():
+        if not isinstance(packages, dict) or not packages:
+            continue
+
+        print(f"📦 Adding {len(packages)} {ecosystem} packages to SBOM")
+
+        # Get the correct PURL type for this ecosystem
+        purl_type = _get_purl_type(ecosystem)
+
+        for dep, ver in packages.items():
+            component = Component(
+                name=dep,
+                version=ver,
+                type=ComponentType.LIBRARY,
+                purl=PackageURL(type=purl_type, name=dep, version=ver)
+            )
+            bom.components.add(component)
+            # Key includes ecosystem for uniqueness across ecosystems
+            component_map[f"{ecosystem}:{dep.lower()}=={ver}"] = component
 
     # Add vulnerabilities to BOM
     process_cve_data(cve_data, component_map, bom)
@@ -58,7 +109,7 @@ def generate(dependencies: dict, cve_data: dict, config: dict):
     output_path = os.path.abspath(config["output"]["sbom_file"])
     with open(output_path, "w") as f:
         f.write(sbom.output_as_string())
-    
+
     print(f"SBOM report exported to: {output_path}")
 
 
@@ -78,13 +129,24 @@ def validate_json_format(sbom):
 
 
 def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
-    for vuln in cve_data.get("cve_issues", []):
+    # Aggregate CVEs from all ecosystems
+    all_cves = []
+    for ecosystem, ecosystem_data in cve_data.get("ecosystems", {}).items():
+        cve_issues = ecosystem_data.get("cve_issues", [])
+        for cve in cve_issues:
+            # Ensure ecosystem is set on each CVE
+            cve["ecosystem"] = ecosystem
+            all_cves.append(cve)
+
+    for vuln in all_cves:
         package_name = vuln.get("package_name")
         installed_version = vuln.get("installed_version")
+        ecosystem = vuln.get("ecosystem", "python")  # Get ecosystem from CVE data
         if not package_name or not installed_version:
             continue
 
-        key = f"{package_name.lower()}=={installed_version}"
+        # Use ecosystem-aware key format
+        key = f"{ecosystem}:{package_name.lower()}=={installed_version}"
         component = component_map.get(key)
         if not component:
             continue  # Skip if not matched to any component
