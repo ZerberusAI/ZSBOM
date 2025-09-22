@@ -11,3 +11,4 @@ build/*
 risk_report.json
 transitive_analysis.json
 scan_metadata.json
+*.config.yaml
