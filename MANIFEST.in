@@ -3,6 +3,7 @@ include LICENSE
 
 # Include configuration files
 include config.yaml
+include depclass/config/default.yaml
 
 # Include documentation
 include README.md
@@ -26,5 +27,5 @@ exclude *.egg-info/
 exclude syft_sbom.json
 exclude sbom.json
 exclude risk_report.json
-exclude transitive_analysis.json
+exclude dependencies.json
 exclude SQLite.sql

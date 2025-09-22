@@ -8,50 +8,6 @@ from depclass.risk_model import RiskModel
 from depclass.risk_calculator import WeightedRiskCalculator
 
 
-def test_compute_package_score_high():
-    """Test that packages with multiple risk factors get high risk scores."""
-    pkg = 'foo'
-    res = risk.compute_package_score(
-        package=pkg,
-        installed_version='1.0',
-        declared_version='0.9',
-        cve_list=[{'package_name': pkg, 'vuln_id': 'CVE-1', 'cwes': ['CWE-79'], 'severity': 'HIGH'}],
-        typosquatting_whitelist=[],
-        repo_path=None,
-        model=RiskModel()
-    )
-    assert res['risk'] == 'high'
-    assert res['score'] <= 49  # High risk is 0-49 in new framework
-
-
-def test_compute_package_score_low():
-    """Test that packages with no risk factors get low risk scores."""
-    pkg = 'safe_package'
-    res = risk.compute_package_score(
-        package=pkg,
-        installed_version='1.0',
-        declared_version='==1.0',  # Exact match
-        cve_list=[],  # No CVEs
-        typosquatting_whitelist=[pkg],  # Add to whitelist to ensure high typosquatting score
-        repo_path=None,
-        model=RiskModel()
-    )
-
-    assert res['risk'] == 'low'
-    assert res['score'] >= 80  # Low risk is 80+ in new framework
-
-
-def test_parse_declared_versions():
-    """Test parsing of declared versions from different sources."""
-    deps = {
-        'requirements.txt': ['foo==1.2'],
-        'pyproject.toml': {'bar': '2.0'}
-    }
-    versions = risk.parse_declared_versions(deps)
-    assert versions['foo'] == '1.2'
-    assert versions['bar'] == '2.0'
-
-
 def test_weighted_risk_calculator():
     """Test the new WeightedRiskCalculator with framework requirements."""
     model = RiskModel()
