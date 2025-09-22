@@ -1,10 +1,15 @@
 """
 Simplified CLI for ZSBOM - replaces the complex multi-module CLI structure.
 """
+import os
+import json
 import sys
 from typing import Optional
 import typer
 from depclass.scanner import ScannerService
+from depclass.upload_orchestrator import UploadOrchestrator
+from depclass.upload.models import TraceAIConfig
+from depclass.environment_detector import EnvironmentDetector
 
 
 # Initialize Typer app
@@ -39,14 +44,8 @@ def upload_command(
     """Upload scan results to Zerberus platform."""
     
     try:
-        # Import upload modules only when needed (lazy loading)
-        from depclass.upload_orchestrator import UploadOrchestrator
-        from depclass.upload.models import TraceAIConfig
-        from depclass.environment_detector import EnvironmentDetector
-        
         # Get license key from environment if not provided
         if not license_key:
-            import os
             license_key = os.getenv("ZERBERUS_LICENSE_KEY")
             if not license_key:
                 typer.echo("❌ License key is required. Use --license-key or set ZERBERUS_LICENSE_KEY environment variable.")
@@ -54,7 +53,6 @@ def upload_command(
         
         # Get API URL from environment if not provided
         if not api_url:
-            import os
             api_url = os.getenv("ZERBERUS_API_URL")
             if not api_url:
                 typer.echo("❌ API URL is required. Use --api-url or set ZERBERUS_API_URL environment variable.")
@@ -78,7 +76,6 @@ def upload_command(
         # Load scan metadata
         scan_metadata = {}
         try:
-            import json
             with open("scan_metadata.json", "r") as f:
                 scan_metadata = json.load(f)
         except FileNotFoundError:

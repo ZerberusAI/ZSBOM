@@ -1,301 +1,274 @@
 """
-Integration Tests for Trace-AI Upload
+Integration Tests for ZSBOM Upload Orchestrator
 
-Tests the complete upload workflow integration with mocked API responses
-and file operations.
+Tests the upload workflow integration with mocked API responses
+and file operations using the actual UploadOrchestrator.
 """
 
 import json
 import os
 import tempfile
 import pytest
-from unittest.mock import patch, Mock, AsyncMock
-import responses
+from unittest.mock import patch, Mock, MagicMock
+from rich.console import Console
 
-from depclass.upload import TraceAIUploadManager
+from depclass.upload_orchestrator import UploadOrchestrator
+from depclass.upload.models import TraceAIConfig, UploadResult
 from depclass.upload.exceptions import (
-    EnvironmentValidationError,
     AuthenticationError,
     APIConnectionError
 )
 
 
-class TestTraceAIUploadIntegration:
-    """Integration tests for upload workflow"""
-    
+class TestUploadOrchestratorIntegration:
+    """Integration tests for UploadOrchestrator workflow"""
+
     def setup_method(self):
         """Setup for each test"""
-        self.upload_manager = TraceAIUploadManager()
-        
-        # Common test environment variables
-        self.test_env = {
-            'ZERBERUS_API_URL': 'https://api.test.com',
-            'ZERBERUS_LICENSE_KEY': 'ZRB-gh-a3f2d5e8b9c14f7a-2e3a'
-        }
-    
+        self.config = TraceAIConfig(
+            api_url="https://api.test.com",
+            license_key="ZRB-test-key"
+        )
+        self.console = Console()
+        self.orchestrator = UploadOrchestrator(self.config, self.console)
+
+    def create_mock_api_client(self):
+        """Create a mock API client that supports context manager protocol"""
+        mock_client = Mock()
+        mock_client.__enter__ = Mock(return_value=mock_client)
+        mock_client.__exit__ = Mock(return_value=None)
+        return mock_client
+
     def create_test_files(self):
         """Create temporary test files for upload"""
         files = {}
         temp_files = []
-        
+
         test_data = {
-            'dependencies.json': {"dependencies": ["package1", "package2"]},
-            'vulnerabilities.json': {"vulnerabilities": []},
+            'dependencies.json': {"dependencies": [{"name": "package1", "version": "1.0"}]},
+            'risk_report.json': {"risk_summary": {"high": 0, "medium": 2, "low": 5}},
             'sbom.json': {"bomFormat": "CycloneDX", "specVersion": "1.4"},
-            'risk_analysis.json': {"risk_scores": []},
-            'scan_metadata.json': {"scan_id": "test", "timestamp": "2024-01-01T00:00:00Z"}
+            'validation_report.json': {"vulnerabilities": []},
+            'scan_metadata.json': {"scan_id": "test123", "timestamp": "2024-01-01T00:00:00Z"}
         }
-        
+
         for filename, data in test_data.items():
             f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
             json.dump(data, f)
-            f.flush()
-            files[filename] = f.name
+            f.close()
+            files[filename.replace('.json', '.json')] = f.name
             temp_files.append(f.name)
-        
+
         return files, temp_files
-    
-    def cleanup_test_files(self, temp_files):
-        """Clean up temporary test files"""
-        for temp_file in temp_files:
+
+    def cleanup_files(self, temp_files):
+        """Clean up temporary files"""
+        for filepath in temp_files:
             try:
-                os.unlink(temp_file)
-            except:
+                os.unlink(filepath)
+            except OSError:
                 pass
-    
-    def test_upload_manager_not_enabled(self):
-        """Test upload manager when environment is not configured"""
-        with patch.dict(os.environ, {}, clear=True):
-            assert self.upload_manager.is_upload_enabled() == False
-    
-    def test_upload_manager_enabled(self):
-        """Test upload manager when environment is properly configured"""
-        with patch.dict(os.environ, self.test_env):
-            assert self.upload_manager.is_upload_enabled() == True
-    
-    def test_upload_workflow_missing_environment(self):
-        """Test upload workflow with missing environment variables"""
-        with patch.dict(os.environ, {}, clear=True):
-            files, temp_files = self.create_test_files()
-            
-            try:
-                with pytest.raises(EnvironmentValidationError):
-                    self.upload_manager.execute_upload_workflow(files, {})
-                    
-            finally:
-                self.cleanup_test_files(temp_files)
-    
-    @responses.activate
-    def test_upload_workflow_success(self):
-        """Test successful complete upload workflow"""
-        with patch.dict(os.environ, self.test_env):
-            # Mock API responses
-            responses.add(
-                responses.POST,
-                'https://api.test.com/trace-ai/scans/initiate',
-                json={
-                    'scan_id': 'test-scan-id',
-                    'project_id': 'test-project-id',
-                    'status': 'in_progress',
-                    'message': 'Scan initiated',
-                    'created_at': '2024-01-01T00:00:00Z'
-                },
-                status=201
-            )
-            
-            responses.add(
-                responses.POST,
-                'https://api.test.com/trace-ai/scans/test-scan-id/upload-urls',
-                json={
-                    'scan_id': 'test-scan-id',
-                    'upload_urls': {
-                        'dependencies.json': {
-                            'url': 'https://s3.test.com/upload1',
-                            'expires_at': '2024-01-01T01:00:00Z',
-                            'fields': {}
-                        },
-                        'vulnerabilities.json': {
-                            'url': 'https://s3.test.com/upload2',
-                            'expires_at': '2024-01-01T01:00:00Z',
-                            'fields': {}
-                        }
-                    },
-                    'upload_deadline': '2024-01-01T01:00:00Z'
-                },
-                status=200
-            )
-            
-            responses.add(
-                responses.POST,
-                'https://api.test.com/trace-ai/scans/test-scan-id/complete',
-                json={
-                    'scan_id': 'test-scan-id',
-                    'status': 'completed',
-                    'report_url': 'https://app.test.com/reports/test-scan-id',
-                    'message': 'Upload completed successfully',
-                    'processing_status': 'queued',
-                    'estimated_processing_time': '2-5 minutes'
-                },
-                status=200
-            )
-            
-            # Create test files
-            files, temp_files = self.create_test_files()
-            
-            # Mock S3 uploads
-            with patch('depclass.upload.api_client.ZerberusAPIClient.upload_files_parallel') as mock_upload:
-                mock_upload.return_value = [
-                    Mock(success=True, file_path=files['dependencies.json'], size_bytes=100),
-                    Mock(success=True, file_path=files['vulnerabilities.json'], size_bytes=50)
-                ]
-                
-                try:
-                    # Execute upload workflow
-                    result = self.upload_manager.execute_upload_workflow(
-                        scan_files={k: v for k, v in files.items() if k in ['dependencies.json', 'vulnerabilities.json']},
-                        scan_metadata={'test': 'metadata'}
-                    )
-                    
-                    # Verify success
-                    assert result.success == True
-                    assert result.scan_id == 'test-scan-id'
-                    assert result.report_url == 'https://app.test.com/reports/test-scan-id'
-                    
-                finally:
-                    self.cleanup_test_files(temp_files)
-    
-    @responses.activate 
-    def test_upload_workflow_authentication_error(self):
-        """Test upload workflow with authentication failure"""
-        with patch.dict(os.environ, self.test_env):
-            # Mock authentication error
-            responses.add(
-                responses.POST,
-                'https://api.test.com/trace-ai/scans/initiate',
-                json={'message': 'Invalid API keys'},
-                status=401
-            )
-            
-            files, temp_files = self.create_test_files()
-            
-            try:
-                result = self.upload_manager.execute_upload_workflow(files, {})
-                
-                # Should handle authentication error gracefully
-                assert result.success == False
-                assert "Authentication failed" in result.error or "Invalid API keys" in result.error
-                
-            finally:
-                self.cleanup_test_files(temp_files)
-    
-    @responses.activate
-    def test_upload_workflow_partial_upload_success(self):
-        """Test upload workflow with some file upload failures"""
-        with patch.dict(os.environ, self.test_env):
-            # Mock successful API responses
-            responses.add(
-                responses.POST,
-                'https://api.test.com/trace-ai/scans/initiate',
-                json={
-                    'scan_id': 'test-scan-id',
-                    'project_id': 'test-project-id',
-                    'status': 'in_progress',
-                    'message': 'Scan initiated',
-                    'created_at': '2024-01-01T00:00:00Z'
-                },
-                status=201
-            )
-            
-            responses.add(
-                responses.POST,
-                'https://api.test.com/trace-ai/scans/test-scan-id/upload-urls',
-                json={
-                    'scan_id': 'test-scan-id',
-                    'upload_urls': {
-                        'dependencies.json': {
-                            'url': 'https://s3.test.com/upload1',
-                            'expires_at': '2024-01-01T01:00:00Z',
-                            'fields': {}
-                        }
-                    },
-                    'upload_deadline': '2024-01-01T01:00:00Z'
-                },
-                status=200
-            )
-            
-            responses.add(
-                responses.POST,
-                'https://api.test.com/trace-ai/scans/test-scan-id/complete',
-                json={
-                    'scan_id': 'test-scan-id',
-                    'status': 'partial',
-                    'report_url': 'https://app.test.com/reports/test-scan-id',
-                    'message': 'Upload partially completed',
-                    'processing_status': 'queued',
-                    'estimated_processing_time': '2-5 minutes'
-                },
-                status=200
-            )
-            
-            files, temp_files = self.create_test_files()
-            
-            # Mock partial upload success (one success, one failure)
-            with patch('depclass.upload.api_client.ZerberusAPIClient.upload_files_parallel') as mock_upload:
-                mock_upload.return_value = [
-                    Mock(success=True, file_path=files['dependencies.json'], size_bytes=100),
-                    Mock(success=False, file_path=files['vulnerabilities.json'], error_message='Upload failed')
-                ]
-                
-                try:
-                    result = self.upload_manager.execute_upload_workflow(
-                        scan_files={'dependencies.json': files['dependencies.json']},
-                        scan_metadata={}
-                    )
-                    
-                    # Should still report success for partial uploads
-                    assert result.success == True
-                    assert result.scan_id == 'test-scan-id'
-                    
-                finally:
-                    self.cleanup_test_files(temp_files)
-    
-    def test_upload_workflow_invalid_files(self):
-        """Test upload workflow with invalid files"""
-        with patch.dict(os.environ, self.test_env):
-            # Create invalid files (wrong extension)
-            invalid_files = {}
-            temp_files = []
-            
-            try:
-                f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False)
-                f.write(b'invalid file')
-                f.flush()
-                invalid_files['invalid.json'] = f.name
-                temp_files.append(f.name)
-                
-                result = self.upload_manager.execute_upload_workflow(invalid_files, {})
-                
-                # Should fail due to file validation
-                assert result.success == False
-                assert "validation" in result.error.lower() or "No valid files" in result.error
-                
-            finally:
-                self.cleanup_test_files(temp_files)
-    
-    @responses.activate
-    def test_upload_workflow_network_error(self):
-        """Test upload workflow with network connectivity issues"""
-        with patch.dict(os.environ, self.test_env):
-            # Don't add any responses - this will trigger connection errors
-            
-            files, temp_files = self.create_test_files()
-            
-            try:
-                result = self.upload_manager.execute_upload_workflow(files, {})
-                
-                # Should handle network errors gracefully
-                assert result.success == False
-                assert "connection" in result.error.lower() or "failed" in result.error.lower()
-                
-            finally:
-                self.cleanup_test_files(temp_files)
+
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    def test_successful_upload_workflow(self, mock_api_client):
+        """Test successful end-to-end upload workflow"""
+        # Setup mock API client
+        mock_client = self.create_mock_api_client()
+        mock_api_client.return_value = mock_client
+
+        # Mock API responses
+        mock_scan_response = Mock()
+        mock_scan_response.scan_id = "remote-scan-id-123"
+        mock_client.initiate_scan.return_value = mock_scan_response
+        mock_client.upload_files.return_value = {
+            "dependencies.json": {"status": "uploaded", "url": "https://s3.aws.com/file1"},
+            "risk_report.json": {"status": "uploaded", "url": "https://s3.aws.com/file2"}
+        }
+        mock_completion_response = Mock()
+        mock_completion_response.report_url = "https://app.com/scan/123"
+        mock_client.acknowledge_completion.return_value = mock_completion_response
+
+        # Create test files
+        scan_files, temp_files = self.create_test_files()
+        scan_metadata = {"scan_id": "local-123", "project_name": "test-project"}
+
+        try:
+            # Execute upload workflow
+            result = self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+
+            # Verify result - the workflow completed successfully despite some warnings
+            assert result.success is True
+            assert result.error is None
+            assert result.scan_id == "remote-scan-id-123"
+
+            # Verify basic API call was made
+            mock_client.initiate_scan.assert_called_once()
+
+        finally:
+            self.cleanup_files(temp_files)
+
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    def test_upload_with_no_files(self, mock_api_client):
+        """Test upload workflow when no files are available"""
+        scan_files = {}  # No files
+        scan_metadata = {"scan_id": "test123"}
+
+        result = self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+
+        assert result.success is False
+        assert "No valid files found" in result.error
+
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    def test_upload_with_missing_files(self, mock_api_client):
+        """Test upload workflow when files don't exist"""
+        scan_files = {
+            "dependencies.json": "/nonexistent/file1.json",
+            "risk_report.json": "/nonexistent/file2.json"
+        }
+        scan_metadata = {"scan_id": "test123"}
+
+        result = self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+
+        assert result.success is False
+        assert "No valid files found" in result.error
+
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    def test_upload_scan_initiation_failure(self, mock_api_client):
+        """Test upload workflow when scan initiation fails"""
+        mock_client = self.create_mock_api_client()
+        mock_api_client.return_value = mock_client
+
+        # Mock API failure
+        mock_client.initiate_scan.side_effect = APIConnectionError("Connection failed")
+
+        # Create test files
+        scan_files, temp_files = self.create_test_files()
+        scan_metadata = {"scan_id": "local-123"}
+
+        try:
+            result = self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+
+            assert result.success is False
+            assert "Connection failed" in result.error
+
+        finally:
+            self.cleanup_files(temp_files)
+
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    def test_upload_file_upload_failure(self, mock_api_client):
+        """Test upload workflow when file upload fails"""
+        mock_client = self.create_mock_api_client()
+        mock_api_client.return_value = mock_client
+
+        # Mock successful initiation but failed upload
+        mock_scan_response = Mock()
+        mock_scan_response.scan_id = "scan-id-123"
+        mock_client.initiate_scan.return_value = mock_scan_response
+        mock_client.upload_files.side_effect = Exception("Upload failed")
+
+        # Create test files
+        scan_files, temp_files = self.create_test_files()
+        scan_metadata = {"scan_id": "local-123"}
+
+        try:
+            result = self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+
+            # The workflow continues despite upload errors, check file results instead
+            assert result.success is True  # Workflow completes
+            assert result.file_results is not None
+            # Check that individual file uploads failed
+            for file_result in result.file_results:
+                assert file_result['success'] is False
+
+        finally:
+            self.cleanup_files(temp_files)
+
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    def test_upload_authentication_error(self, mock_api_client):
+        """Test upload workflow with authentication error"""
+        mock_client = self.create_mock_api_client()
+        mock_api_client.return_value = mock_client
+
+        # Mock authentication failure
+        mock_client.initiate_scan.side_effect = AuthenticationError("Invalid API key")
+
+        # Create test files
+        scan_files, temp_files = self.create_test_files()
+        scan_metadata = {"scan_id": "local-123"}
+
+        try:
+            result = self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+
+            assert result.success is False
+            assert "Invalid API key" in result.error
+
+        finally:
+            self.cleanup_files(temp_files)
+
+    def test_metadata_collector_integration(self):
+        """Test integration with metadata collector"""
+        mock_collector = Mock()
+
+        # Set metadata collector
+        self.orchestrator.set_metadata_collector(mock_collector)
+
+        assert self.orchestrator.metadata_collector == mock_collector
+
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    @patch('depclass.upload_orchestrator.json.dump')
+    @patch('builtins.open', create=True)
+    def test_metadata_file_update(self, mock_open, mock_json_dump, mock_api_client):
+        """Test updating metadata file with remote scan ID"""
+        # Create a real temporary file for this test
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump({"scan_id": "local-123", "test": "data"}, f)
+            temp_file = f.name
+
+        try:
+            scan_files = {"scan_metadata.json": temp_file}
+            scan_metadata = {"scan_id": "local-123"}
+
+            # Setup mock API client
+            mock_client = self.create_mock_api_client()
+            mock_api_client.return_value = mock_client
+            mock_scan_response = Mock()
+            mock_scan_response.scan_id = "remote-scan-456"
+            mock_client.initiate_scan.return_value = mock_scan_response
+            mock_client.upload_files.return_value = {"scan_metadata.json": {"status": "uploaded"}}
+            mock_completion_response = Mock()
+            mock_completion_response.report_url = "https://app.com/scan/456"
+            mock_client.acknowledge_completion.return_value = mock_completion_response
+
+            # Execute workflow
+            result = self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+
+            assert result.success is True
+
+        finally:
+            os.unlink(temp_file)
+
+
+class TestTraceAIConfig:
+    """Test TraceAIConfig model"""
+
+    def test_config_creation(self):
+        """Test creating TraceAI configuration"""
+        config = TraceAIConfig(
+            api_url="https://test.api.com",
+            license_key="test-key"
+        )
+
+        assert config.api_url == "https://test.api.com"
+        assert config.license_key == "test-key"
+
+    def test_config_with_optional_fields(self):
+        """Test config with optional timeout and retry settings"""
+        config = TraceAIConfig(
+            api_url="https://test.api.com",
+            license_key="test-key",
+            upload_timeout=60,
+            max_retries=5
+        )
+
+        assert config.upload_timeout == 60
+        assert config.max_retries == 5

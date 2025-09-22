@@ -29,6 +29,8 @@ class MetadataCollector:
         self.errors: List[Dict[str, Any]] = []
         self.statistics: Dict[str, Any] = {}
         self.generated_files: List[str] = []
+        self.threshold_result: Optional[Any] = None
+        self.threshold_failure_message: Optional[str] = None
     
     def start_collection(self) -> str:
         """Start metadata collection and return scan ID."""
@@ -56,6 +58,12 @@ class MetadataCollector:
     def update_scan_id(self, scan_id: str):
         """Update scan_id with the one from meta-guard service."""
         self.scan_id = scan_id
+
+    def set_threshold_failure(self, threshold_result: Any):
+        """Store threshold failure result for data-prefect-flow processing."""
+        self.threshold_result = threshold_result
+        if threshold_result and hasattr(threshold_result, 'failure_reason'):
+            self.threshold_failure_message = threshold_result.failure_reason
     
     def _run_git_command(self, args: List[str]) -> Optional[str]:
         """Run a git command and return output, None if failed."""
@@ -221,14 +229,39 @@ class MetadataCollector:
             "working_directory": os.getcwd()
         }
         
-        return {
+        # Prepare execution info with threshold failure details
+        execution_info = {
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "duration_seconds": duration,
+            "exit_code": exit_code
+        }
+
+        # Add error message to execution if threshold failed
+        if self.threshold_failure_message and exit_code != 0:
+            execution_info["error_message"] = self.threshold_failure_message
+
+        # Prepare threshold results for data-prefect-flow processing
+        threshold_results = {}
+        if self.threshold_result:
+            threshold_results = {
+                "should_fail_build": getattr(self.threshold_result, 'should_fail_build', False),
+                "failure_reason": getattr(self.threshold_result, 'failure_reason', None),
+                "threshold_exceeded": getattr(self.threshold_result, 'threshold_exceeded', False),
+                "critical_vulnerabilities_found": getattr(self.threshold_result, 'critical_vulnerabilities_found', False),
+                "calculated_score": getattr(self.threshold_result, 'calculated_score', 0),
+                "max_threshold": getattr(self.threshold_result, 'max_threshold', 0),
+                "vulnerability_counts": {
+                    "critical": getattr(getattr(self.threshold_result, 'vulnerability_counts', None), 'critical', 0),
+                    "high": getattr(getattr(self.threshold_result, 'vulnerability_counts', None), 'high', 0),
+                    "medium": getattr(getattr(self.threshold_result, 'vulnerability_counts', None), 'medium', 0),
+                    "low": getattr(getattr(self.threshold_result, 'vulnerability_counts', None), 'low', 0)
+                } if hasattr(self.threshold_result, 'vulnerability_counts') else {}
+            }
+
+        metadata = {
             "scan_id": self.scan_id,
-            "execution": {
-                "started_at": self.started_at.isoformat() if self.started_at else None,
-                "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-                "duration_seconds": duration,
-                "exit_code": exit_code
-            },
+            "execution": execution_info,
             "repository": repository_info,
             "ci_context": ci_info,
             "environment": environment,
@@ -237,6 +270,12 @@ class MetadataCollector:
             "errors": self.errors,
             "error_count": len(self.errors)
         }
+
+        # Add threshold results only if we have threshold data
+        if threshold_results:
+            metadata["threshold_results"] = threshold_results
+
+        return metadata
     
     def save_metadata(self, output_path: Optional[str] = None) -> str:
         """Save metadata to file."""

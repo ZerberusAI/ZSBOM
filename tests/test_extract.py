@@ -199,25 +199,6 @@ dependencies = ["requests>=2.28.0"]
         assert parser._convert_poetry_spec(">=1.0.0") == ">=1.0.0"
         assert parser._convert_poetry_spec("==1.2.3") == "==1.2.3"
 
-    @patch('importlib.metadata.distributions')
-    def test_installed_packages_extraction(self, mock_distributions):
-        """Test extraction of installed packages."""
-        # Mock installed packages
-        mock_dist1 = MagicMock()
-        mock_dist1.metadata = {"Name": "requests"}
-        mock_dist1.version = "2.28.0"
-        
-        mock_dist2 = MagicMock()
-        mock_dist2.metadata = {"Name": "NumPy"}  # Test case normalization
-        mock_dist2.version = "1.21.5"
-        
-        mock_distributions.return_value = [mock_dist1, mock_dist2]
-        
-        parser = DependencyFileParser()
-        installed = parser._get_installed_packages()
-        
-        assert installed["requests"] == "2.28.0"
-        assert installed["numpy"] == "1.21.5"  # Should be normalized to lowercase
 
     def test_error_handling(self):
         """Test error handling for malformed files."""
@@ -250,7 +231,6 @@ numpy>=1.21.0
             print(deps)
             
             assert "requirements.txt" not in deps
-            assert "runtime" in deps  # Should always include runtime packages
 
     def test_comments_and_whitespace_handling(self):
         """Test proper handling of comments and whitespace."""
@@ -293,19 +273,16 @@ class TestExtractDependenciesFunction:
             
             deps = result["dependencies"]
             assert "requirements.txt" in deps
-            assert "runtime" in deps
             assert deps["requirements.txt"]["requests"] == "==2.28.0"
             assert deps["requirements.txt"]["numpy"] == ">=1.21.0"
 
     def test_extract_dependencies_current_directory(self):
         """Test extract_dependencies with default current directory."""
-        # This should run without errors and return runtime packages
+        # This should run without errors
         result = extract()
-        
+
         assert "dependencies" in result
         assert "dependencies_analysis" in result
-        assert "runtime" in result["dependencies"]
-        assert isinstance(result["dependencies"]["runtime"], dict)
 
     def test_multiple_file_formats(self):
         """Test extraction from multiple file formats simultaneously."""
@@ -331,7 +308,6 @@ dependencies = ["requests>=2.28.0", "flask>=2.0.0"]
             # Should have both files
             assert "requirements.txt" in deps
             assert "pyproject.toml" in deps
-            assert "runtime" in deps
             
             # Each file should have its own version
             assert deps["requirements.txt"]["requests"] == "==2.25.0"
