@@ -5,13 +5,13 @@ Handles all API interactions with the Zerberus server following the 3-phase
 upload workflow: initiate, upload URLs, and completion acknowledgment.
 """
 
-import json
+import os
 import time
 import asyncio
 import aiohttp
 import aiofiles
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 from urllib.parse import urljoin
 
 import requests
@@ -206,7 +206,6 @@ class ZerberusAPIClient:
         
         try:
             # Get file size
-            import os
             file_size = os.path.getsize(file_path)
             
             # Prepare upload

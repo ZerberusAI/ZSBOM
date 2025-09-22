@@ -3,8 +3,7 @@ Simplified scanner service implementation for ZSBOM.
 """
 import json
 import os
-import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 from depclass.db.vulnerability import VulnerabilityCache
 from depclass.extract import extract
@@ -130,7 +129,6 @@ class ScannerService:
         """Check vulnerability thresholds from API configuration."""
         try:
             # Get threshold configuration from environment variables (set by GitHub Actions)
-            import os
             api_url = os.getenv("ZERBERUS_API_URL")
             if not api_url:
                 # No API URL configured, skip threshold checking
