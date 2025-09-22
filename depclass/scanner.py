@@ -73,12 +73,14 @@ class ScannerService:
                 metadata_collector.add_error("validation", e)
                 results = {}
             
-            # Check vulnerability thresholds 
+            # Check vulnerability thresholds
             threshold_result = self._check_vulnerability_thresholds(results)
             if threshold_result and threshold_result.should_fail_build:
                 exit_code = 1
                 self.console.print(f"\n❌ Build failed: {threshold_result.failure_reason}", style="bold red")
-                metadata_collector.add_error("threshold_check", threshold_result.failure_reason)
+                metadata_collector.add_error("threshold_check", Exception(threshold_result.failure_reason))
+                # Store threshold results for data-prefect-flow processing
+                metadata_collector.set_threshold_failure(threshold_result)
             
             # Assess risk
             try:
