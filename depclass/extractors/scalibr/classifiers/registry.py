@@ -8,13 +8,14 @@ for each ecosystem.
 from typing import Optional
 
 from .base import BaseDependencyClassifier
-from .npm import NPMDependencyClassifier
+from .javascript import JavaScriptDependencyClassifier
 
 
 # Registry mapping ecosystem names to classifier classes
-# Following YAGNI: Only NPM for now, easy to extend for Java, Go, etc.
+# Only JavaScript for now, easy to extend for Java, Go, etc.
+# Note: Ecosystem key remains 'npm' for PURL compatibility
 DEPENDENCY_CLASSIFIERS = {
-    "npm": NPMDependencyClassifier,
+    "npm": JavaScriptDependencyClassifier,
     # Future ecosystems:
     # "java": JavaDependencyClassifier,
     # "go": GoDependencyClassifier,
