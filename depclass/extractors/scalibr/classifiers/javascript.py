@@ -1,8 +1,13 @@
 """
-NPM/JavaScript dependency classifier.
+JavaScript dependency classifier.
 
 Determines direct vs transitive dependencies by reading package.json
 to identify which packages are directly declared.
+
+Note: While this classifier handles JavaScript packages, the ecosystem
+identifier remains 'npm' for PURL compatibility since npm is the primary
+package registry. However, this supports all JavaScript package managers
+(npm, yarn, pnpm, bun) that use package.json and lock files.
 """
 
 import json
@@ -14,13 +19,14 @@ from rich.console import Console
 from .base import BaseDependencyClassifier
 
 
-class NPMDependencyClassifier(BaseDependencyClassifier):
+class JavaScriptDependencyClassifier(BaseDependencyClassifier):
     """
-    Classifier for NPM/JavaScript dependencies.
+    Classifier for JavaScript dependencies.
 
     Reads package.json to determine which packages are direct dependencies
     (declared in dependencies, devDependencies, etc.) vs transitive
-    dependencies (only found in package-lock.json).
+    dependencies (only found in lock files such as package-lock.json,
+    yarn.lock, pnpm-lock.yaml, etc.).
     """
 
     def get_direct_dependencies(self, project_path: Path) -> Set[str]:
@@ -92,7 +98,7 @@ class NPMDependencyClassifier(BaseDependencyClassifier):
     def build_dependency_tree(self, flat_tree: Dict[str, Any],
                              resolution_details: Dict[str, str]) -> Dict[str, Any]:
         """
-        Build dependency tree for NPM packages following Python's approach.
+        Build dependency tree for JavaScript packages following Python's approach.
 
         This implementation follows the Python extractor pattern:
         - Only DIRECT dependencies get children populated
@@ -166,7 +172,7 @@ class NPMDependencyClassifier(BaseDependencyClassifier):
                                  resolution_details: Dict[str, str], current_depth: int = 0,
                                  max_depth: int = 3, visited: set = None) -> Dict[str, Any]:
         """
-        Build children structure recursively for NPM dependencies.
+        Build children structure recursively for JavaScript dependencies.
 
         Following Python's approach with proper safeguards to prevent massive files.
 
