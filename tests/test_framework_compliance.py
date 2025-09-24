@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pytest
 from depclass.risk_calculator import WeightedRiskCalculator
 from depclass.risk_model import RiskModel
+from depclass.models import RiskDimension
 
 
 class TestFrameworkCompliance:
@@ -20,11 +21,11 @@ class TestFrameworkCompliance:
         
         # Simulate the framework example scores
         dimension_scores = {
-            'declared_vs_installed': 8.0,
-            'known_cves': 10.0,
-            'cwe_coverage': 10.0,
-            'package_abandonment': 2.0,
-            'typosquat_heuristics': 10.0
+            RiskDimension.DECLARED_VS_INSTALLED: 8.0,
+            RiskDimension.KNOWN_CVES: 10.0,
+            RiskDimension.CWE_COVERAGE: 10.0,
+            RiskDimension.PACKAGE_ABANDONMENT: 2.0,
+            RiskDimension.TYPOSQUAT_HEURISTICS: 10.0,
         }
         
         # Test individual weighted contributions
@@ -32,11 +33,11 @@ class TestFrameworkCompliance:
         
         # Framework expected values
         expected_contributions = {
-            'declared_vs_installed': 12.0,  # 8 × 15% × 10
-            'known_cves': 30.0,            # 10 × 30% × 10
-            'cwe_coverage': 20.0,          # 10 × 20% × 10
-            'package_abandonment': 4.0,    # 2 × 20% × 10
-            'typosquat_heuristics': 15.0   # 10 × 15% × 10
+            RiskDimension.DECLARED_VS_INSTALLED: 12.0,
+            RiskDimension.KNOWN_CVES: 30.0,
+            RiskDimension.CWE_COVERAGE: 20.0,
+            RiskDimension.PACKAGE_ABANDONMENT: 4.0,
+            RiskDimension.TYPOSQUAT_HEURISTICS: 15.0,
         }
         
         for dimension, expected in expected_contributions.items():

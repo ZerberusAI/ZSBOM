@@ -3,6 +3,8 @@ import json
 import os
 import sys
 
+from decimal import Decimal
+
 from cyclonedx.model.bom import Bom
 from cyclonedx.builder.this import this_component as cdx_lib_component
 from cyclonedx.model.component import Component, ComponentType
@@ -31,7 +33,7 @@ SEVERITY_MAP = {
 
 
 
-def generate_sbom(dependencies: dict, cve_data: dict, config: dict):
+def generate(dependencies: dict, cve_data: dict, config: dict):
     bom = Bom()
     bom.metadata.tools.components.add(cdx_lib_component())
     component_map = {}
@@ -58,6 +60,10 @@ def generate_sbom(dependencies: dict, cve_data: dict, config: dict):
         f.write(sbom.output_as_string())
     
     print(f"SBOM report exported to: {output_path}")
+
+
+# Backwards compatibility
+generate_sbom = generate
 
 def validate_json_format(sbom):
     serialized_json = sbom.output_as_string(indent=2)
@@ -87,13 +93,10 @@ def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
         if not vuln_id:
             continue
 
-        # Enhanced severity and CVSS handling
+        # Use severity already calculated by OSV source (single source of truth)
         cvss_vector = vuln.get("cvss_vector", "")
         score = vuln.get("score")
-        if score and cvss_vector:
-            severity = VulnerabilitySeverity.get_from_cvss_scores(scores=(score,))
-        else:
-            severity = SEVERITY_MAP.get(vuln.get("severity", "").lower(), VulnerabilitySeverity.UNKNOWN)
+        severity = SEVERITY_MAP.get(vuln.get("severity", "").lower(), VulnerabilitySeverity.UNKNOWN)
         
         cwes = vuln.get("cwes") or []
         summary = vuln.get("summary", "")
@@ -118,7 +121,7 @@ def process_cve_data(cve_data: dict, component_map: dict, bom: Bom):
         }
         
         if score:
-            rating_kwargs["score"] = score
+            rating_kwargs["score"] = Decimal(score)
         
         if cvss_vector:
             rating_kwargs["vector"] = cvss_vector
@@ -218,3 +221,4 @@ def read_json_file(file_path: str):
 #    outputter = get_instance(bom, output_format='json')
 #    with open("sbom.json", "w") as f:
 #        f.write(outputter.output_as_string())
+

@@ -98,7 +98,7 @@ output:
   report_file: "validation_report.json"
   sbom_file: "sbom.json"
   risk_file: "risk_report.json"
-  transitive_file: "transitive_analysis.json"
+  dependencies_file: "dependencies.json"
 # Risk scoring weights (ZSBOM Risk Scoring Framework v1.0)
 risk_model:
   weights:
@@ -122,6 +122,42 @@ caching:
   database: "sqlite"  # or "postgresql"
   path: ".cache/zsbom.db"
   ttl_hours: 24
+
+# NEW: Trace-AI upload configuration (Phase 5)
+trace_ai:
+  upload:
+    enabled: false  # Controlled by environment variables
+    max_file_size_mb: 5
+    allowed_formats: [".json"]
+    timeout_seconds: 300
+    max_retries: 3
+    parallel_uploads: 3
+    
+  api:
+    endpoints:
+      scan_initiate: "/trace-ai/scans/initiate"
+      upload_urls: "/trace-ai/scans/{scan_id}/upload-urls"
+      complete: "/trace-ai/scans/{scan_id}/complete"
+    
+    headers:
+      org_key: "X-Zerberus-Org-Key"
+      project_key: "X-Zerberus-Project-Key"
+      content_type: "application/json"
+    
+  files:
+    # Mapping of ZSBOM files to upload names
+    dependencies: "dependencies.json"
+    vulnerabilities: "vulnerabilities.json"  # Renamed from validation_report.json
+    sbom: "sbom.json"
+    risk_analysis: "risk_analysis.json"      # Renamed from risk_report.json
+    metadata: "scan_metadata.json"
+    
+  user_experience:
+    progress_bar_style: "cyan"
+    success_emoji: "🎉"
+    warning_emoji: "⚠️"
+    error_emoji: "❌"
+    upload_emoji: "🚀"
 
 notifications:
   gchat:

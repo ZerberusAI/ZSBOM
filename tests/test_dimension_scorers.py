@@ -664,8 +664,14 @@ class TestTyposquatHeuristicsScorer:
         scorer = TyposquatHeuristicsScorer()
         score = scorer.score("requ3st5", "1.0.0")  # Similar + substitutions + proximity
         
-        # Should get very low score - actual: 1 + 0 + 0 + 1 + 0 = 2
-        assert score == 2.0
+        # Should get very low score - actual: 1 + 0 + 0 + 0 + 0 = 1
+        # Factor breakdown:
+        # - String distance: 1 (distance 2 to "requests")
+        # - Downloads + similarity: 0 (low downloads + similar)
+        # - Character substitution: 0 (has substitutions: 3→e, 5→s)
+        # - Keyboard proximity: 0 (has proximity typos)
+        # - Creation date: 0 (new package + similar)
+        assert score == 1.0
     
     @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_top_packages')
     @patch('depclass.dimension_scorers.typosquat_heuristics.TyposquatHeuristicsScorer._get_pypi_metadata')

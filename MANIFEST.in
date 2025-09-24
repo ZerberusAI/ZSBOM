@@ -2,11 +2,10 @@
 include LICENSE
 
 # Include configuration files
-include config.yaml
+include pyproject.toml
+include depclass/config/default.yaml
 
 # Include documentation
-include README.md
-include CLAUDE.md
 include *.md
 
 # Include examples
@@ -15,16 +14,10 @@ recursive-include examples *.json
 # Include test files (for source distributions)
 recursive-include tests *.py
 
-# Exclude build artifacts and temporary files
-exclude build/
-recursive-exclude * __pycache__
-recursive-exclude * *.py[co]
-recursive-exclude * *.egg-info
-exclude venv/
-exclude .git/
-exclude *.egg-info/
-exclude syft_sbom.json
+# Exclude runtime output files and temporary data
 exclude sbom.json
 exclude risk_report.json
-exclude transitive_analysis.json
-exclude SQLite.sql
+exclude dependencies.json
+exclude validation_report.json
+exclude scan_metadata.json
+exclude "-- SQLite.sql"
