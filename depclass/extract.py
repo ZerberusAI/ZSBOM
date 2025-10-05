@@ -72,11 +72,11 @@ def _extract_python_if_present(project_path: str, config: Dict, cache) -> Dict[s
             print("🐍 Detected Python ecosystem")
             return python_extractor.extract_dependencies(config, cache)
 
-        return _create_empty_ecosystem_result()
+        return _create_empty_result()
 
     except Exception as e:
         print(f"⚠️ Python extraction failed: {e}")
-        return _create_empty_ecosystem_result()
+        return _create_empty_result()
 
 
 def _extract_via_scalibr(project_path: str, config: Dict, cache) -> Dict[str, Any]:
@@ -100,20 +100,39 @@ def _extract_via_scalibr(project_path: str, config: Dict, cache) -> Dict[str, An
                     )
                 }
 
-        return _create_empty_ecosystem_result()
+        return _create_empty_result()
 
     except Exception as e:
         print(f"⚠️ Scalibr extraction failed: {e}")
-        return _create_empty_ecosystem_result()
+        return _create_empty_result()
 
 
-def _create_empty_ecosystem_result() -> Dict[str, Any]:
-    """Create empty ecosystem result structure."""
-    return {
+def _create_empty_result(include_analysis_details: bool = False) -> Dict[str, Any]:
+    """Create empty result structure.
+
+    Args:
+        include_analysis_details: If True, include full dependencies_analysis structure
+
+    Returns:
+        Empty result dictionary
+    """
+    base_result = {
         "ecosystems": {},
         "ecosystems_detected": [],
         "total_packages": 0
     }
+
+    if include_analysis_details:
+        base_result["dependencies_analysis"] = {
+            "total_packages": 0,
+            "ecosystems_detected": [],
+            "dependency_tree": {},
+            "package_files": [],
+            "resolution_details": {},
+            "package_specs": {}
+        }
+
+    return base_result
 
 
 def _merge_ecosystem_results(
@@ -137,13 +156,14 @@ def _merge_ecosystem_results(
 
     if not all_ecosystems:
         print("❌ No package ecosystems detected in this project")
-        return _create_empty_unified_result()
+        return _create_empty_result(include_analysis_details=True)
 
     # Build unified result structure
     dependencies = {}
     dependency_trees = {}
     all_package_files = []
     resolution_details = {}
+    all_package_specs = {}
 
     for ecosystem_name, ecosystem_data in all_ecosystems.items():
         # Extract dependencies for each ecosystem
@@ -154,6 +174,11 @@ def _merge_ecosystem_results(
         eco_analysis = ecosystem_data.get("dependencies_analysis", {})
         dependency_trees[ecosystem_name] = eco_analysis.get("dependency_tree", {})
         resolution_details[ecosystem_name] = eco_analysis.get("resolution_details", {})
+
+        # Extract package_specs for declared vs installed scoring
+        eco_package_specs = eco_analysis.get("package_specs", {})
+        if eco_package_specs:
+            all_package_specs.update(eco_package_specs)
 
         # Collect package files (already have ecosystem tags)
         eco_package_files = eco_analysis.get("package_files", [])
@@ -168,21 +193,8 @@ def _merge_ecosystem_results(
             "ecosystems_detected": detected_ecosystems,
             "dependency_tree": dependency_trees,
             "package_files": all_package_files,
-            "resolution_details": resolution_details
-        }
-    }
-
-
-def _create_empty_unified_result() -> Dict[str, Any]:
-    """Create empty unified result structure."""
-    return {
-        "dependencies": {},
-        "dependencies_analysis": {
-            "total_packages": 0,
-            "ecosystems_detected": [],
-            "dependency_tree": {},
-            "package_files": [],
-            "resolution_details": {}
+            "resolution_details": resolution_details,
+            "package_specs": all_package_specs
         }
     }
 

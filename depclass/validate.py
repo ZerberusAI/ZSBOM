@@ -56,10 +56,6 @@ from rich.live import Live
 
 from .notification.gchat import GChatNotifier
 from .db.vulnerability import VulnerabilityCache
-from depclass.vulnerability_sources.osv_source import OSVSource
-from depclass.vulnerability_sources.safety_db import SafetyDBSource
-from depclass.weakness_sources.mitre import MitreSource
-from depclass.weakness_sources.nvd import NvdSource
 
 
 logging.basicConfig(
@@ -104,57 +100,71 @@ def check_versions(dependencies, min_versions, enable_check):
             issues[pkg] = {"installed": installed_version, "required": min_version}
     return issues
 
-def check_cve(config, dependencies, cache):
+def _extract_package_vulnerabilities(ecosystem, enhanced_data):
+    """Extract vulnerability data from enhanced security data.
+
+    Yields (package_name, vulnerability_dict) tuples for processing.
+    """
+    ecosystem_data = enhanced_data.get(ecosystem, {})
+    if not ecosystem_data:
+        return
+
+    try:
+        for package_key, package_data in ecosystem_data.items():
+            vulnerabilities = package_data.get("vulnerability", {}).get("vulnerabilities", [])
+            if not vulnerabilities:
+                continue
+
+            package_name = package_key.split("==")[0]
+            for vuln in vulnerabilities:
+                yield package_name, vuln
+
+    except Exception as e:
+        logging.error(f"Error extracting vulnerabilities for ecosystem {ecosystem}: {e}")
+
+
+def check_cve(ecosystem, enhanced_data):
+    """Extract CVE data from enhanced security data and add package_name field."""
     result = []
-    cve_sources = {
-        "osv_dev": OSVSource,
-        "safety_db": SafetyDBSource
-    }
 
-    # Idea is to get CVE data from all the enabled sources and consolidate it in the result
-    for cve_source, value in config['sources']['cve'].items():
-        if value.get('enabled', False):
-            cve = cve_sources[cve_source](config, dependencies, cache)
-            result = cve.fetch_vulnerabilities()
+    try:
+        for package_name, vuln in _extract_package_vulnerabilities(ecosystem, enhanced_data):
+            # Create enhanced vulnerability with package_name
+            enhanced_vuln = vuln.copy()
+            enhanced_vuln["package_name"] = package_name
+            result.append(enhanced_vuln)
 
-    # TODO
-    # Append result and consolidation
+    except Exception as e:
+        logging.error(f"Error in check_cve for ecosystem {ecosystem}: {e}")
 
     return result
 
-def _fetch_weakness_with_spinner(cwe_instance, cwe_source_name: str):
-    """Wrapper that adds Rich spinner to CWE database download."""
-    console = Console()
-    with Live(Spinner("dots", text=f"[bold yellow]Downloading {cwe_source_name} database...[/bold yellow]"), 
-              console=console, refresh_per_second=4) as live:
-        try:
-            result = cwe_instance.fetch_weakness()
-            live.update("[bold green]✔ Download completed[/bold green]")
-            time.sleep(0.5)  # Brief pause to show completion
-            return result
-        except Exception as e:
-            live.update("[bold red]✗ Download failed[/bold red]")
-            time.sleep(0.5)
-            raise
 
-def check_cwe(config, cache):
+def check_cwe(ecosystem, enhanced_data):
+    """Extract CWE data from enhanced security data."""
     result = []
-    cwe_sources = {
-        "mitre_weaknesses": MitreSource,
-        "nvd_weaknesses": NvdSource
-    }
+    seen_cwes = set()  # Track duplicates efficiently
 
-    for cwe_source, value in config['sources']['cwe'].items():
-        if value.get('enabled', False):
-            try:
-                cwe = cwe_sources[cwe_source](config, cache)
-                # TODO
-                # Append result and consolidation
-                result = _fetch_weakness_with_spinner(cwe, cwe_source.replace('_', ' ').title())
-            except Exception as e:
-                logging.warning(f"⚠️ MITRE fetch failed, falling back to NIST: {e}")
-                cwe = cwe_sources['nvd_weaknesses'](config, cache)
-                result = _fetch_weakness_with_spinner(cwe, "NVD Weaknesses")
+    try:
+        for package_name, vuln in _extract_package_vulnerabilities(ecosystem, enhanced_data):
+            # Get CWE IDs from database_specific or fallback to top level
+            db_specific = vuln.get("database_specific", {})
+            cwe_ids = db_specific.get("cwe_ids", vuln.get("cwe_ids", []))
+
+            for cwe_id in cwe_ids:
+                if not cwe_id or cwe_id in seen_cwes:
+                    continue
+
+                seen_cwes.add(cwe_id)
+                result.append({
+                    "cwe_id": cwe_id,
+                    "package_name": package_name,
+                    "vuln_id": vuln.get("vuln_id", vuln.get("id", "")),
+                    "severity": vuln.get("severity", "UNKNOWN")
+                })
+
+    except Exception as e:
+        logging.error(f"Error in check_cwe for ecosystem {ecosystem}: {e}")
 
     return result
 
@@ -191,13 +201,15 @@ def validate(config, cache=None, transitive_analysis=None):
 
         # Get ecosystem-specific data
         classification = transitive_analysis.get("classification", {}).get(ecosystem, {})
+        enhanced_data = transitive_analysis.get("enhanced_data", {})
+
 
         # Validate ecosystem packages
         ecosystem_results = {
-            "cve_issues": check_cve(config, packages, cache),
+            "cve_issues": check_cve(ecosystem, enhanced_data),
             "abandoned_packages": check_abandoned(packages, config["abandoned_packages"], config["validation_rules"]["enable_abandoned_check"]),
             "version_issues": check_versions(packages, config["min_versions"], config["validation_rules"]["enable_version_check"]),
-            "cwe_weaknesses": check_cwe(config, cache),
+            "cwe_weaknesses": check_cwe(ecosystem, enhanced_data),
             "package_count": len(packages),
             "packages": list(packages.keys())
         }

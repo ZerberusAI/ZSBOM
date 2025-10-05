@@ -576,6 +576,9 @@ class PythonExtractor(BaseExtractor):
         direct_sources = tree_data["direct_sources"]
         resolution_details = tree_data["resolution_details"]
 
+        # Build package_specs dictionary for declared vs installed scoring
+        package_specs = self._build_package_specs(original_dependencies, dependency_tree, resolution_details)
+
         # Build hierarchical dependency tree
         hierarchical_tree = {}
 
@@ -634,8 +637,68 @@ class PythonExtractor(BaseExtractor):
             "total_packages": len(resolution_details),
             "dependency_tree": hierarchical_tree,
             "package_files": package_files,
-            "resolution_details": resolution_details
+            "resolution_details": resolution_details,
+            "package_specs": package_specs
         }
+
+    def _build_package_specs(self, original_dependencies: Dict[str, Dict[str, str]],
+                           dependency_tree: Dict[str, List[str]],
+                           resolution_details: Dict[str, str]) -> Dict[str, Dict[str, str]]:
+        """Build package_specs dictionary for declared vs installed scoring.
+
+        Args:
+            original_dependencies: Dict mapping file names to package specifications
+            dependency_tree: Dict mapping packages to their parent packages
+            resolution_details: Dict mapping packages to their resolved versions
+
+        Returns:
+            Dict with format {file_name: {package_name: version_spec}} for direct deps
+            and {transitive_from_parent: {package_name: version_spec}} for transitive deps
+        """
+        package_specs = {}
+
+        # Add direct dependencies from original files
+        for file_name, packages in original_dependencies.items():
+            if file_name != "runtime" and packages:  # Skip runtime packages
+                package_specs[file_name] = {}
+                for package, version_spec in packages.items():
+                    package_specs[file_name][package.lower()] = version_spec
+
+        # Add transitive dependencies with their parent's declared versions
+        self._add_transitive_package_specs(package_specs, dependency_tree, resolution_details)
+
+        return package_specs
+
+    def _add_transitive_package_specs(self, package_specs: Dict[str, Dict[str, str]],
+                                    dependency_tree: Dict[str, List[str]],
+                                    resolution_details: Dict[str, str]) -> None:
+        """Add transitive dependencies to package_specs with their parent's declared versions.
+
+        Args:
+            package_specs: Dictionary to modify (adds transitive specs)
+            dependency_tree: Dict mapping packages to their parent packages
+            resolution_details: Dict mapping packages to their resolved versions
+        """
+        for package, parents in dependency_tree.items():
+            if not parents:  # Skip packages with no parents (direct deps)
+                continue
+
+            for parent in parents:
+                parent_lower = parent.lower()
+                package_lower = package.lower()
+
+                # Get the version this parent declares for this package
+                parent_resolved_version = resolution_details.get(parent_lower, "")
+                package_resolved_version = resolution_details.get(package_lower, "")
+
+                if parent_resolved_version and package_resolved_version:
+                    # Create a "transitive from parent" file entry
+                    transitive_file = f"transitive_from_{parent_lower}"
+                    if transitive_file not in package_specs:
+                        package_specs[transitive_file] = {}
+
+                    # Store the declared version (pinned to what parent resolves to)
+                    package_specs[transitive_file][package_lower] = f"=={package_resolved_version}"
 
     def _build_children(self, parent_package: str, dependency_tree: Dict[str, List[str]],
                        depth_levels: Dict[str, int], resolution_details: Dict[str, str],
