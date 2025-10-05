@@ -254,28 +254,3 @@ class ScalibrWrapper:
         if result:
             return json.loads(result)
         return None
-
-
-# Convenience functions for common use cases
-
-def scan_javascript(root: str = ".", with_vulns: bool = True) -> Optional[Dict[str, Any]]:
-    """Scan for JavaScript/Node.js packages with optional vulnerability enrichment."""
-    scalibr = ScalibrWrapper()
-    plugins = ["javascript"]
-    if with_vulns:
-        plugins.extend(["enrichers/vulnmatch", "enrichers/license"])
-    return scalibr.scan(root, plugins)
-
-
-def scan_npm(root: str = ".", with_vulns: bool = True) -> Optional[Dict[str, Any]]:
-    """Scan for NPM packages (alias for scan_javascript)."""
-    return scan_javascript(root, with_vulns)
-
-
-def scan_all_languages(root: str = ".", with_enrichment: bool = True) -> Optional[Dict[str, Any]]:
-    """Scan for all supported language packages with optional enrichment."""
-    scalibr = ScalibrWrapper()
-    plugins = ["extractors/default"]
-    if with_enrichment:
-        plugins.extend(["enrichers/all", "annotators/all"])
-    return scalibr.scan(root, plugins)

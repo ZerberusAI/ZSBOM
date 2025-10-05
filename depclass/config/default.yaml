@@ -85,7 +85,7 @@ sources:
       url: "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
     osv_dev:
       enabled: true
-      url: "https://api.osv.dev/v1/querybatch"
+      url: "https://api.osv.dev/v1"
   cwe:
     mitre_weaknesses: 
       enabled: true
