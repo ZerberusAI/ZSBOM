@@ -67,6 +67,7 @@ class ScanMetadata:
     started_at: Optional[datetime] = None
     environment: Optional[Dict[str, Any]] = None
     local_execution: bool = True
+    pr_number: Optional[int] = None
 
 
 @dataclass
