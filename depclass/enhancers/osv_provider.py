@@ -146,6 +146,92 @@ class OSVProvider(CacheableMixin):
         response = self._make_request("GET", url)
         return response.json()
 
+    def _deduplicate_vulnerability_ids(
+        self, vuln_ids: List[str], vuln_details: Dict[str, Dict]
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        """
+        Deduplicate vulnerability IDs that are aliases of the same vulnerability.
+
+        OSV.dev often returns the same vulnerability multiple times with different IDs
+        (e.g., GHSA-xxx, PYSEC-xxx, CVE-xxx). This function identifies duplicates
+        by analyzing the aliases field and selects a primary ID for each unique vulnerability.
+
+        Args:
+            vuln_ids: List of vulnerability IDs from OSV response
+            vuln_details: Dictionary mapping vuln_id to full vulnerability details
+
+        Returns:
+            Tuple of (deduplicated_ids, alias_map) where:
+            - deduplicated_ids: List of unique primary vulnerability IDs
+            - alias_map: Dict mapping primary ID to all its aliases
+        """
+        if not vuln_ids:
+            return [], {}
+
+        # Priority order for selecting primary ID
+        # GHSA is preferred as it's GitHub's canonical ID, followed by CVE, then others
+        def get_priority(vuln_id: str) -> int:
+            if vuln_id.startswith("GHSA-"):
+                return 0
+            elif vuln_id.startswith("CVE-"):
+                return 1
+            elif vuln_id.startswith("PYSEC-"):
+                return 2
+            else:
+                return 3
+
+        # Build alias groups: each vuln and its aliases form a group
+        alias_groups = {}  # vuln_id -> set of all related IDs (including itself)
+
+        for vuln_id in vuln_ids:
+            vuln = vuln_details.get(vuln_id, {})
+            aliases = vuln.get("aliases", [])
+
+            # Create a set with the vuln_id and all its aliases
+            related_ids = {vuln_id} | set(aliases)
+
+            alias_groups[vuln_id] = related_ids
+
+        # Merge groups that share any common IDs
+        merged_groups = []
+        for vuln_id, related_ids in alias_groups.items():
+            # Check if this group overlaps with any existing merged group
+            found_group = False
+            for existing_group in merged_groups:
+                if related_ids & existing_group:  # If there's any overlap
+                    existing_group.update(related_ids)
+                    found_group = True
+                    break
+
+            if not found_group:
+                merged_groups.append(related_ids)
+
+        # For each merged group, select the primary ID and build alias map
+        deduplicated_ids = []
+        alias_map = {}
+
+        for group in merged_groups:
+            # Find which IDs from this group are in our vuln_ids list
+            group_vuln_ids = [vid for vid in vuln_ids if vid in group]
+
+            if not group_vuln_ids:
+                continue
+
+            # Select primary ID based on priority
+            primary_id = min(group_vuln_ids, key=get_priority)
+
+            # Store all IDs in the group as aliases
+            all_aliases = sorted(list(group))
+
+            deduplicated_ids.append(primary_id)
+            alias_map[primary_id] = all_aliases
+
+        self.logger.debug(
+            f"Deduplicated {len(vuln_ids)} vulnerability IDs to {len(deduplicated_ids)} unique vulnerabilities"
+        )
+
+        return deduplicated_ids, alias_map
+
     def _process_vulnerability_batch(
         self, packages: List[Tuple[str, str]], queries: List[Dict], ecosystem: str
     ) -> Dict[str, Dict[str, Any]]:
@@ -179,10 +265,16 @@ class OSVProvider(CacheableMixin):
         # Step 2: fetch all vuln details concurrently
         vuln_details = self._fetch_all_vulns(all_vuln_ids)
 
+        # Step 3: Deduplicate vulnerabilities and process each package
         for (package, version), vuln_ids in package_to_vuln_ids.items():
             if vuln_ids:
+                # Deduplicate vulnerability IDs to avoid counting aliases as separate vulnerabilities
+                deduplicated_ids, alias_map = self._deduplicate_vulnerability_ids(
+                    vuln_ids, vuln_details
+                )
+
                 results[package] = self._process_vulnerabilities(
-                    package, version, ecosystem, vuln_ids, vuln_details
+                    package, version, ecosystem, deduplicated_ids, vuln_details, alias_map
                 )
             else:
                 results[package] = self._get_fallback_vuln_data(
@@ -198,13 +290,26 @@ class OSVProvider(CacheableMixin):
         ecosystem: str,
         vuln_ids: List[str],
         vuln_details: Dict[str, Dict],
+        alias_map: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, Any]:
-        """Process vulnerability data for a package."""
+        """Process vulnerability data for a package.
+
+        Args:
+            package: Package name
+            version: Package version
+            ecosystem: Package ecosystem
+            vuln_ids: List of deduplicated vulnerability IDs
+            vuln_details: Full vulnerability details
+            alias_map: Optional mapping of primary vuln IDs to all their aliases
+        """
         processed_vulns = []
+        alias_map = alias_map or {}
 
         for vuln_id in vuln_ids:
             vuln = vuln_details[vuln_id]
-            processed_vuln = self._process_single_vulnerability(vuln, version)
+            # Get merged aliases from alias_map if available
+            merged_aliases = alias_map.get(vuln_id, vuln.get("aliases", []))
+            processed_vuln = self._process_single_vulnerability(vuln, version, merged_aliases)
             processed_vulns.append(processed_vuln)
 
         return {
@@ -224,8 +329,16 @@ class OSVProvider(CacheableMixin):
             ),
         }
 
-    def _process_single_vulnerability(self, vuln: Dict, version: str) -> Dict[str, Any]:
-        """Process individual vulnerability."""
+    def _process_single_vulnerability(
+        self, vuln: Dict, version: str, merged_aliases: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Process individual vulnerability.
+
+        Args:
+            vuln: Vulnerability data from OSV
+            version: Package version
+            merged_aliases: Optional list of all merged aliases from deduplication
+        """
         cwe_mappings = []
 
         db_specific = vuln.get("database_specific", {})
@@ -246,6 +359,9 @@ class OSVProvider(CacheableMixin):
         # Normalize severity (handles MODERATE → MEDIUM)
         severity = CVSSExtractor.normalize_severity(severity)
 
+        # Use merged aliases if provided (from deduplication), otherwise use vuln's aliases
+        aliases = merged_aliases if merged_aliases is not None else vuln.get("aliases", [])
+
         return {
             "id": vuln.get("id", ""),
             "source": "osv.dev",
@@ -256,7 +372,7 @@ class OSVProvider(CacheableMixin):
             "cvss_vector": severity_array,  # Store full array for SBOM generation
             "published": vuln.get("published", ""),
             "modified": vuln.get("modified", ""),
-            "aliases": vuln.get("aliases", []),
+            "aliases": aliases,
             "references": vuln.get("references", []),
             "affected_versions": self._extract_affected_versions(vuln),
             "fixed": self._extract_fixed_versions(vuln, version),
