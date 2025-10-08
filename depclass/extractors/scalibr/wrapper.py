@@ -73,10 +73,29 @@ def try_build_library(build_dir: Path) -> bool:
                 text=True,
                 timeout=300  # 5 minutes
             )
-            return result.returncode == 0
-    except Exception:
-        pass
-    return False
+
+            if result.returncode == 0:
+                return True
+            else:
+                # Build failed - show the error messages
+                print("❌ Build script failed:")
+                if result.stdout:
+                    print("   stdout:", result.stdout[:500])  # First 500 chars
+                if result.stderr:
+                    print("   stderr:", result.stderr[:500])  # First 500 chars
+                return False
+        else:
+            print(f"⚠️  Build script not found at {build_script}")
+            return False
+    except subprocess.TimeoutExpired:
+        print("❌ Build timed out after 5 minutes")
+        return False
+    except FileNotFoundError as e:
+        print(f"❌ Python interpreter not found: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ Unexpected error during build: {e}")
+        return False
 
 
 def load_scalibr_library():
