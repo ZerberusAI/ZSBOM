@@ -66,7 +66,7 @@ class DepsDevProvider(CacheableMixin):
         )
 
     def enhance(
-        self, packages: List[Tuple[str, str]], ecosystem: str
+        self, packages: List[Tuple[str, str]], ecosystem: str, context: Dict
     ) -> Dict[str, Any]:
         """Enhance packages with metadata from deps.dev API."""
         if not packages:
