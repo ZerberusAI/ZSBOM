@@ -10,6 +10,7 @@ from depclass.scanner import ScannerService
 from depclass.upload_orchestrator import UploadOrchestrator
 from depclass.upload.models import TraceAIConfig
 from depclass.environment_detector import EnvironmentDetector
+from depclass.rich_utils.ui_helpers import get_console
 
 
 # Initialize Typer app
@@ -42,65 +43,76 @@ def upload_command(
     timeout: int = typer.Option(300, "--timeout", help="Upload timeout in seconds")
 ):
     """Upload scan results to Zerberus platform."""
-    
+
+    console = get_console()
+
     try:
         # Get license key from environment if not provided
         if not license_key:
             license_key = os.getenv("ZERBERUS_LICENSE_KEY")
             if not license_key:
-                typer.echo("❌ License key is required. Use --license-key or set ZERBERUS_LICENSE_KEY environment variable.")
+                console.print("❌ License key is required. Use --license-key or set ZERBERUS_LICENSE_KEY environment variable.", style="bold red")
                 sys.exit(1)
-        
+
         # Get API URL from environment if not provided
         if not api_url:
             api_url = os.getenv("ZERBERUS_API_URL")
             if not api_url:
-                typer.echo("❌ API URL is required. Use --api-url or set ZERBERUS_API_URL environment variable.")
+                console.print("❌ API URL is required. Use --api-url or set ZERBERUS_API_URL environment variable.", style="bold red")
                 sys.exit(1)
-        
+
         # Create configuration
         config = TraceAIConfig(
             api_url=api_url,
             license_key=license_key,
             upload_timeout=timeout
         )
-        
+
         # Detect scan files
         env_detector = EnvironmentDetector()
         scan_files = env_detector.detect_scan_files()
-        
+
         if not scan_files:
-            typer.echo("❌ No scan files found. Run 'zsbom scan' first.")
+            console.print("❌ No scan files found. Run 'zsbom scan' first.", style="bold red")
             sys.exit(1)
-        
+
         # Load scan metadata
         scan_metadata = {}
         try:
             with open("scan_metadata.json", "r") as f:
                 scan_metadata = json.load(f)
+
+            # Check if repository uses unsupported ecosystems
+            statistics = scan_metadata.get("statistics", {})
+            if statistics.get("unsupported_repo", False):
+                console.print("ℹ️  This repository uses unsupported ecosystems - skipping upload", style="bold blue")
+                console.print(f"📦 Currently supported: {', '.join(statistics.get('supported_ecosystems', []))}", style="dim")
+                console.print("✅ No action required", style="bold green")
+                sys.exit(0)
+
         except FileNotFoundError:
-            typer.echo("⚠️ No scan metadata found. Proceeding with minimal metadata.")
-        
+            console.print("⚠️ No scan metadata found. Proceeding with minimal metadata.", style="bold yellow")
+
         # Execute upload (metadata file will be updated automatically with API scan_id)
         orchestrator = UploadOrchestrator(config)
         result = orchestrator.execute_upload_workflow(scan_files, scan_metadata)
-        
+
         if result.success:
-            typer.echo(f"✅ Upload successful! Report available at: {result.report_url}")
-            
+            console.print(f"✅ Upload successful! Report available at: {result.report_url}", style="bold green")
+
             # Check threshold validation results
             if result.threshold_result and result.threshold_result.should_fail_build:
-                typer.echo(f"❌ Build failed: {result.threshold_result.failure_reason}")
+                console.print(f"❌ Build failed: {result.threshold_result.failure_reason}", style="bold red")
                 sys.exit(1)
         else:
-            typer.echo(f"❌ Upload failed: {result.error}")
+            console.print(f"❌ Upload failed: {result.error}", style="bold red")
             sys.exit(1)
-            
+
     except KeyboardInterrupt:
-        typer.echo("\n⚠️ Upload interrupted by user")
+        console.print("\n⚠️ Upload interrupted by user", style="bold yellow")
         sys.exit(130)
     except Exception as e:
-        typer.echo(f"❌ Upload failed: {str(e)}")
+        console.print(f"❌ Upload failed: {str(e)}", style="bold red")
         sys.exit(1)
 
 

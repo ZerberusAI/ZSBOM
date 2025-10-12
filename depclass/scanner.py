@@ -58,6 +58,27 @@ class ScannerService:
                 dependency_data = dependencies.get("dependencies", dependencies)
                 dependencies_analysis = dependencies.get("dependencies_analysis", {})
 
+                # Check if repository uses unsupported ecosystems
+                if dependencies_analysis.get("unsupported_repo", False):
+                    self.console.print("\nℹ️  This repository does not contain supported package ecosystems", style="bold blue")
+                    self.console.print(f"📦 Currently supported: {', '.join(dependencies_analysis.get('supported_ecosystems', []))}", style="dim")
+                    self.console.print("💡 ZSBOM will skip security analysis for this repository", style="dim")
+
+                    # Save metadata with unsupported repo status
+                    metadata_collector.update_statistics({
+                        "repository_status": "unsupported_ecosystems",
+                        "unsupported_repo": True,
+                        "supported_ecosystems": dependencies_analysis.get('supported_ecosystems', []),
+                        "status_message": dependencies_analysis.get('status_message', 'No supported ecosystems detected')
+                    })
+                    metadata_file = metadata_collector.save_metadata()
+
+                    self.console.print(f"\n✅ Scan completed - No supported ecosystems detected (ID: {scan_id[:8]})", style="bold green")
+                    self.console.print(f"📋 Scan metadata saved to {metadata_file}", style="dim")
+
+                    # Return exit code 0 (success) with metadata indicating unsupported repo
+                    return 0, metadata_collector.finalize_collection(0)
+
                 # Display progress
                 self._display_scan_progress(scan_id, dependencies_analysis)
 
