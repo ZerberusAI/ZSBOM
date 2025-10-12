@@ -136,8 +136,25 @@ def _merge_ecosystem_results(
     total_packages = python_result.get("total_packages", 0) + scalibr_result.get("total_packages", 0)
 
     if not all_ecosystems:
-        print("❌ No package ecosystems detected in this project")
-        return _create_empty_unified_result()
+        print("ℹ️  No supported package ecosystems detected in this repository")
+        print("📦 ZSBOM currently supports: Python, JavaScript/npm")
+        print("💡 Support for additional ecosystems (Go, Rust, Java, etc.) is coming soon")
+
+        # Return structured result indicating unsupported repository
+        return {
+            "dependencies": {},
+            "dependencies_analysis": {
+                "total_packages": 0,
+                "ecosystems_detected": [],
+                "dependency_tree": {},
+                "package_files": [],
+                "resolution_details": {},
+                "package_specs": {},
+                "unsupported_repo": True,  # Flag for unsupported ecosystem
+                "supported_ecosystems": ["python", "npm"],  # List of supported ecosystems
+                "status_message": "No supported ecosystems detected"
+            }
+        }
 
     # Build unified result structure
     dependencies = {}
