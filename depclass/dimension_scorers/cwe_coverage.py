@@ -74,20 +74,17 @@ class CWECoverageScorer(DimensionScorer):
         if not cve_list:
             return 10.0  # No CVEs/CWEs found
         
-        # Extract CWEs from CVEs for this package
+        # Extract CWEs from enhanced CVEs for this package
         relevant_cves = [cve for cve in cve_list if cve.get("package_name") == package]
-        
+
         if not relevant_cves:
             return 10.0  # No CVEs for this package
-        
-        # Collect all CWEs from the relevant CVEs
+
+        # Collect all CWEs from the relevant CVEs (enhanced structure already promotes CWE IDs)
         all_cwes = []
         for cve in relevant_cves:
-            cwes = cve.get("cwes", [])
-            if isinstance(cwes, list):
-                all_cwes.extend(cwes)
-            elif isinstance(cwes, str):
-                all_cwes.append(cwes)
+            cwe_ids = cve.get("cwe_ids", [])
+            all_cwes.extend(cwe_ids)
         
         if not all_cwes:
             return 10.0  # No CWEs found
@@ -145,22 +142,18 @@ class CWECoverageScorer(DimensionScorer):
         
         relevant_cves = [cve for cve in cve_list if cve.get("package_name") == package]
         
-        # Collect all CWEs with their sources
+        # Collect all CWEs with their sources (enhanced structure)
         all_cwes = []
         cwe_sources = {}
         for cve in relevant_cves:
-            cwes = cve.get("cwes", [])
-            if isinstance(cwes, list):
-                for cwe in cwes:
-                    all_cwes.append(cwe)
-                    if cwe not in cwe_sources:
-                        cwe_sources[cwe] = []
-                    cwe_sources[cwe].append(cve.get("vuln_id"))
-            elif isinstance(cwes, str):
-                all_cwes.append(cwes)
-                if cwes not in cwe_sources:
-                    cwe_sources[cwes] = []
-                cwe_sources[cwes].append(cve.get("vuln_id"))
+            cwe_ids = cve.get("cwe_ids", [])
+            vuln_id = cve.get("vuln_id", cve.get("id"))
+
+            for cwe in cwe_ids:
+                all_cwes.append(cwe)
+                if cwe not in cwe_sources:
+                    cwe_sources[cwe] = []
+                cwe_sources[cwe].append(vuln_id)
         
         unique_cwes = set(all_cwes)
         cwe_details = []

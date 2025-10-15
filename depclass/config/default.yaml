@@ -9,7 +9,6 @@ validation_rules:
 transitive_analysis:
   pip_compile_timeout: 120  # seconds
   cache_ttl_hours: 24  # hours to cache pip-compile results
-  include_in_validation: true  # Include transitive dependencies in security validation
   include_in_risk_scoring: true  # Include transitive dependencies in risk scoring
   apply_depth_weighting: false  # Apply depth-based risk weighting (future enhancement)
   max_depth_to_score: 5  # Limit scoring depth for performance (future enhancement)
@@ -86,7 +85,7 @@ sources:
       url: "https://raw.githubusercontent.com/pyupio/safety-db/master/data/insecure_full.json"
     osv_dev:
       enabled: true
-      url: "https://api.osv.dev/v1/querybatch"
+      url: "https://api.osv.dev/v1"
   cwe:
     mitre_weaknesses: 
       enabled: true

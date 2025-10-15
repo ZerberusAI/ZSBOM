@@ -182,7 +182,8 @@ class UploadOrchestrator:
             trigger_type=trigger_type,
             started_at=started_at,
             environment=scan_metadata.get("environment", {}),
-            local_execution=not ci_context.get("is_ci", False)
+            local_execution=not ci_context.get("is_ci", False),
+            pr_number=ci_context.get("pr_number")
         )
         
         # Create request object

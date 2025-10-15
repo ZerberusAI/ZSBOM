@@ -70,6 +70,8 @@ class ConfigManager:
     def _merge_configs(self, default: dict, user: dict) -> dict:
         """Simple config merge."""
         result = default.copy()
+        if user is None:
+            return result
         for key, value in user.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 result[key] = self._merge_configs(result[key], value)

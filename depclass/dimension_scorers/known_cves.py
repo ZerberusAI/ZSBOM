@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
+from ..cvss_utils import CVSSExtractor
 from .base import DimensionScorer
 
 
@@ -110,12 +111,15 @@ class KnownCVEsScorer(DimensionScorer):
         
         cve_details = []
         for cve in relevant_cves:
+            # Extract CVSS score from cvss_scores array
+            cvss_score = cve.get("cvss_score", None)
+
             cve_details.append({
-                "vuln_id": cve.get("vuln_id"),
+                "vuln_id": cve.get("vuln_id", cve.get("id")),
                 "severity": self._get_severity(cve),
                 "summary": cve.get("summary", ""),
                 "fixed": self._is_fixed(cve),
-                "cvss_score": cve.get("cvss_score"),
+                "cvss_score": cvss_score,
             })
         
         return {
@@ -128,37 +132,21 @@ class KnownCVEsScorer(DimensionScorer):
         }
 
     def _get_severity(self, cve: Dict[str, Any]) -> str:
-        """Extract severity from CVE data.
-        
+        """Extract severity from enhanced CVE data and normalize to standard levels.
+
         Args:
-            cve: CVE dictionary
-            
+            cve: Enhanced CVE dictionary with severity field
+
         Returns:
             Severity string (CRITICAL, HIGH, MEDIUM, LOW, NONE)
         """
-        # Try different severity fields
-        severity = cve.get("severity", "").upper()
+        # Use unified CVSS extractor for severity extraction
+        severity = CVSSExtractor.extract_severity_from_vuln(cve)
+
+        # Ensure the severity is in our weight map
         if severity in self.SEVERITY_WEIGHTS:
             return severity
-        
-        # Try CVSS score mapping
-        cvss_score = cve.get("cvss_score")
-        if cvss_score is not None:
-            try:
-                score = float(cvss_score)
-                if score >= 9.0:
-                    return "CRITICAL"
-                elif score >= 7.0:
-                    return "HIGH"
-                elif score >= 4.0:
-                    return "MEDIUM"
-                elif score > 0.0:
-                    return "LOW"
-                else:
-                    return "NONE"
-            except (ValueError, TypeError):
-                pass
-        
+
         return "MEDIUM"  # Default fallback
 
     def _get_worst_severity(self, cves: List[Dict[str, Any]]) -> str:
@@ -182,23 +170,22 @@ class KnownCVEsScorer(DimensionScorer):
         return "NONE"
 
     def _is_fixed(self, cve: Dict[str, Any]) -> bool:
-        """Check if CVE has been fixed.
-        
+        """Check if CVE has been fixed based on OSV affected ranges.
+
         Args:
-            cve: CVE dictionary
-            
+            cve: Enhanced CVE dictionary
+
         Returns:
-            True if fixed, False otherwise
+            True if fixed version exists, False otherwise
         """
-        # Check various fields that might indicate fix status
-        fixed_in = cve.get("fixed_in")
-        if fixed_in:
-            return True
-        
-        patched = cve.get("patched", False)
-        if patched:
-            return True
-        
-        # Check if fix is available in newer versions
-        fix_available = cve.get("fix_available", False)
-        return fix_available
+        # Check if there are any fixed ranges in the affected field
+        affected = cve.get("affected", [])
+        for affected_item in affected:
+            ranges = affected_item.get("ranges", [])
+            for range_item in ranges:
+                events = range_item.get("events", [])
+                # If there's a 'fixed' event, the CVE has a fix
+                if any("fixed" in event for event in events):
+                    return True
+
+        return False
