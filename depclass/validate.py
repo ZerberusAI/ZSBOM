@@ -56,10 +56,6 @@ from rich.live import Live
 
 from .notification.gchat import GChatNotifier
 from .db.vulnerability import VulnerabilityCache
-from depclass.vulnerability_sources.osv_source import OSVSource
-from depclass.vulnerability_sources.safety_db import SafetyDBSource
-from depclass.weakness_sources.mitre import MitreSource
-from depclass.weakness_sources.nvd import NvdSource
 
 
 logging.basicConfig(
@@ -83,9 +79,6 @@ def load_config(config_file=CONFIG_PATH):
     with open(config_file, "r") as f:
         return yaml.safe_load(f)
 
-# Get installed dependencies
-def get_installed_packages():
-    return {pkg.metadata["Name"].lower(): pkg.version for pkg in importlib.metadata.distributions()}
 
 # Check for abandoned packages
 def check_abandoned(dependencies, abandoned_list, enable_check):
@@ -107,97 +100,156 @@ def check_versions(dependencies, min_versions, enable_check):
             issues[pkg] = {"installed": installed_version, "required": min_version}
     return issues
 
-def check_cve(config, dependencies, cache):
+def _extract_package_vulnerabilities(ecosystem, enhanced_data):
+    """Extract vulnerability data from enhanced security data.
+
+    Yields (package_name, vulnerability_dict) tuples for processing.
+    """
+    ecosystem_data = enhanced_data.get(ecosystem, {})
+    if not ecosystem_data:
+        return
+
+    try:
+        for package_key, package_data in ecosystem_data.items():
+            vulnerabilities = package_data.get("vulnerability", {}).get("vulnerabilities", [])
+            if not vulnerabilities:
+                continue
+
+            package_name = package_key.split("==")[0]
+            for vuln in vulnerabilities:
+                yield package_name, vuln
+
+    except Exception as e:
+        logging.error(f"Error extracting vulnerabilities for ecosystem {ecosystem}: {e}")
+
+
+def check_cve(ecosystem, enhanced_data):
+    """Extract CVE data from enhanced security data and add package_name field."""
     result = []
-    cve_sources = {
-        "osv_dev": OSVSource,
-        "safety_db": SafetyDBSource
-    }
 
-    # Idea is to get CVE data from all the enabled sources and consolidate it in the result
-    for cve_source, value in config['sources']['cve'].items():
-        if value.get('enabled', False):
-            cve = cve_sources[cve_source](config, dependencies, cache)
-            result = cve.fetch_vulnerabilities()
+    try:
+        for package_name, vuln in _extract_package_vulnerabilities(ecosystem, enhanced_data):
+            # Create enhanced vulnerability with package_name
+            enhanced_vuln = vuln.copy()
+            enhanced_vuln["package_name"] = package_name
+            result.append(enhanced_vuln)
 
-    # TODO
-    # Append result and consolidation
+    except Exception as e:
+        logging.error(f"Error in check_cve for ecosystem {ecosystem}: {e}")
 
     return result
 
-def _fetch_weakness_with_spinner(cwe_instance, cwe_source_name: str):
-    """Wrapper that adds Rich spinner to CWE database download."""
-    console = Console()
-    with Live(Spinner("dots", text=f"[bold yellow]Downloading {cwe_source_name} database...[/bold yellow]"), 
-              console=console, refresh_per_second=4) as live:
-        try:
-            result = cwe_instance.fetch_weakness()
-            live.update("[bold green]✔ Download completed[/bold green]")
-            time.sleep(0.5)  # Brief pause to show completion
-            return result
-        except Exception as e:
-            live.update("[bold red]✗ Download failed[/bold red]")
-            time.sleep(0.5)
-            raise
 
-def check_cwe(config, cache):
+def check_cwe(ecosystem, enhanced_data):
+    """Extract CWE data from enhanced security data."""
     result = []
-    cwe_sources = {
-        "mitre_weaknesses": MitreSource,
-        "nvd_weaknesses": NvdSource
-    }
+    seen_cwes = set()  # Track duplicates efficiently
 
-    for cwe_source, value in config['sources']['cwe'].items():
-        if value.get('enabled', False):
-            try:
-                cwe = cwe_sources[cwe_source](config, cache)
-                # TODO
-                # Append result and consolidation
-                result = _fetch_weakness_with_spinner(cwe, cwe_source.replace('_', ' ').title())
-            except Exception as e:
-                logging.warning(f"⚠️ MITRE fetch failed, falling back to NIST: {e}")
-                cwe = cwe_sources['nvd_weaknesses'](config, cache)
-                result = _fetch_weakness_with_spinner(cwe, "NVD Weaknesses")
+    try:
+        for package_name, vuln in _extract_package_vulnerabilities(ecosystem, enhanced_data):
+            # Get CWE IDs from database_specific or fallback to top level
+            db_specific = vuln.get("database_specific", {})
+            cwe_ids = db_specific.get("cwe_ids", vuln.get("cwe_ids", []))
+
+            for cwe_id in cwe_ids:
+                if not cwe_id or cwe_id in seen_cwes:
+                    continue
+
+                seen_cwes.add(cwe_id)
+                result.append({
+                    "cwe_id": cwe_id,
+                    "package_name": package_name,
+                    "vuln_id": vuln.get("vuln_id", vuln.get("id", "")),
+                    "severity": vuln.get("severity", "UNKNOWN")
+                })
+
+    except Exception as e:
+        logging.error(f"Error in check_cwe for ecosystem {ecosystem}: {e}")
 
     return result
 
 # Main validation function
 def validate(config, cache=None, transitive_analysis=None):
-    # If transitive analysis is available and transitive validation is enabled, use resolved packages
-    include_transitive = config.get('transitive_analysis', {}).get('include_in_validation', True)
-    if transitive_analysis and include_transitive:
-        resolved_packages = transitive_analysis.get("resolution_details", {})
-        if resolved_packages:
-            # Use only resolved packages from pip-compile (declared + transitive dependencies)
-            dependencies = resolved_packages
-            logging.info(f"🔍 Validating {len(dependencies)} packages (including transitive dependencies)")
-        else:
-            logging.warning("⚠️ No resolved packages found in transitive analysis, cannot validate without dependency resolution")
-            dependencies = {}
-    else:
-        # For backward compatibility when transitive analysis is disabled
-        logging.warning("⚠️ Transitive analysis disabled, validation limited to resolved packages only")  
-        dependencies = transitive_analysis.get("resolution_details", {}) if transitive_analysis else {}
-    
     # Use provided cache or create new one if caching is enabled
     if cache is None and config['caching']['enabled']:
         os.makedirs(os.path.dirname(config['caching']['path']), exist_ok=True)
         cache = VulnerabilityCache(config['caching']['path'])
 
-    results = {
-        "cve_issues": check_cve(config, dependencies, cache),
-        "abandoned_packages": check_abandoned(dependencies, config["abandoned_packages"], config["validation_rules"]["enable_abandoned_check"]),
-        "version_issues": check_versions(dependencies, config["min_versions"], config["validation_rules"]["enable_version_check"]),
-        "cwe_weaknesses": check_cwe(config, cache),
-    }
-    
-    # Add package classification if transitive analysis is available
-    if transitive_analysis and include_transitive:
-        classification = transitive_analysis.get("classification", {})
-        # Tag each CVE issue with dependency type
-        for cve in results["cve_issues"]:
+    ecosystems_data = transitive_analysis.get("resolution_details", {}) if transitive_analysis else {}
+    if not transitive_analysis or not ecosystems_data:
+        logging.warning("⚠️ No resolved packages found in transitive analysis")
+        return {
+            "ecosystems": {},
+            "total_cve_issues": 0,
+            "total_abandoned_packages": 0,
+            "total_version_issues": 0,
+            "total_packages": 0
+        }
+
+    # Process each ecosystem separately
+    results = {"ecosystems": {}}
+    total_packages = 0
+    total_cve_issues = 0
+    total_abandoned_packages = 0
+    total_version_issues = 0
+
+    for ecosystem, packages in ecosystems_data.items():
+        if not isinstance(packages, dict) or not packages:
+            continue
+
+        logging.info(f"🔍 Validating {len(packages)} packages from {ecosystem} ecosystem")
+
+        # Get ecosystem-specific data
+        classification = transitive_analysis.get("classification", {}).get(ecosystem, {})
+        enhanced_data = transitive_analysis.get("enhanced_data", {})
+
+
+        # Validate ecosystem packages
+        ecosystem_results = {
+            "cve_issues": check_cve(ecosystem, enhanced_data),
+            "abandoned_packages": check_abandoned(packages, config["abandoned_packages"], config["validation_rules"]["enable_abandoned_check"]),
+            "version_issues": check_versions(packages, config["min_versions"], config["validation_rules"]["enable_version_check"]),
+            "cwe_weaknesses": check_cwe(ecosystem, enhanced_data),
+            "package_count": len(packages),
+            "packages": list(packages.keys())
+        }
+
+        # Tag issues with dependency type and ecosystem
+        for cve in ecosystem_results["cve_issues"]:
             package_name = cve.get("package_name", "")
             cve["dependency_type"] = classification.get(package_name, "unknown")
+            cve["ecosystem"] = ecosystem
+
+        for abandoned in ecosystem_results["abandoned_packages"]:
+            if isinstance(abandoned, dict) and "package" in abandoned:
+                package_name = abandoned["package"]
+                abandoned["dependency_type"] = classification.get(package_name, "unknown")
+                abandoned["ecosystem"] = ecosystem
+
+        for version_issue in ecosystem_results["version_issues"]:
+            if isinstance(version_issue, dict) and "package" in version_issue:
+                package_name = version_issue["package"]
+                version_issue["dependency_type"] = classification.get(package_name, "unknown")
+                version_issue["ecosystem"] = ecosystem
+
+        results["ecosystems"][ecosystem] = ecosystem_results
+
+        # Update totals
+        total_packages += len(packages)
+        total_cve_issues += len(ecosystem_results["cve_issues"])
+        total_abandoned_packages += len(ecosystem_results["abandoned_packages"])
+        total_version_issues += len(ecosystem_results["version_issues"])
+
+    # Add summary totals
+    results.update({
+        "total_packages": total_packages,
+        "total_cve_issues": total_cve_issues,
+        "total_abandoned_packages": total_abandoned_packages,
+        "total_version_issues": total_version_issues,
+        "ecosystems_detected": list(results["ecosystems"].keys())
+    })
+
+    logging.info(f"🔍 Validated {total_packages} packages from {len(results['ecosystems'])} ecosystems")
 
     if config['caching']['enabled']:
         scan_id = cache.store_scan_result(results)
@@ -206,7 +258,7 @@ def validate(config, cache=None, transitive_analysis=None):
     # Save results to JSON file
     with open(config["output"]["report_file"], "w") as f:
         json.dump(results, f, indent=4)
-    
+
     print(f"✅ Validation completed. Results saved in `{config['output']['report_file']}`.")
     if config['notifications']['gchat']['enabled']:
         notifier = GChatNotifier(config)

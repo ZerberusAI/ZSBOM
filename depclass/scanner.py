@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 from depclass.db.vulnerability import VulnerabilityCache
 from depclass.extract import extract
+from depclass.enhancers.orchestrator import EnhancerOrchestrator
 from depclass.risk import score_packages
 from depclass.risk_model import load_model
 from depclass.sbom import generate, read_json_file
@@ -25,12 +26,11 @@ class ScannerService:
         self.console = get_console()
     
     def execute_scan(
-        self, 
+        self,
         config_path: Optional[str] = None,
         output: Optional[str] = None,
         skip_sbom: bool = False,
-        ignore_conflicts: bool = False,
-        ecosystem: str = "python"
+        ignore_conflicts: bool = False
     ) -> Tuple[int, dict]:
         """Execute complete scan workflow."""
         
@@ -54,17 +54,57 @@ class ScannerService:
             
             # Extract dependencies
             try:
-                dependencies = extract(config=config, cache=cache, ecosystem=ecosystem)
+                dependencies = extract(config=config, cache=cache)
                 dependency_data = dependencies.get("dependencies", dependencies)
                 dependencies_analysis = dependencies.get("dependencies_analysis", {})
-                
+
+                # Check if repository uses unsupported ecosystems
+                if dependencies_analysis.get("unsupported_repo", False):
+                    self.console.print("\nℹ️  This repository does not contain supported package ecosystems", style="bold blue")
+                    self.console.print(f"📦 Currently supported: {', '.join(dependencies_analysis.get('supported_ecosystems', []))}", style="dim")
+                    self.console.print("💡 ZSBOM will skip security analysis for this repository", style="dim")
+
+                    # Save metadata with unsupported repo status
+                    metadata_collector.update_statistics({
+                        "repository_status": "unsupported_ecosystems",
+                        "unsupported_repo": True,
+                        "supported_ecosystems": dependencies_analysis.get('supported_ecosystems', []),
+                        "status_message": dependencies_analysis.get('status_message', 'No supported ecosystems detected')
+                    })
+                    metadata_file = metadata_collector.save_metadata()
+
+                    self.console.print(f"\n✅ Scan completed - No supported ecosystems detected (ID: {scan_id[:8]})", style="bold green")
+                    self.console.print(f"📋 Scan metadata saved to {metadata_file}", style="dim")
+
+                    # Return exit code 0 (success) with metadata indicating unsupported repo
+                    return 0, metadata_collector.finalize_collection(0)
+
                 # Display progress
                 self._display_scan_progress(scan_id, dependencies_analysis)
-                
+
             except Exception as e:
                 metadata_collector.add_error("dependency_extraction", e)
                 raise
-            
+
+            # Enhance dependencies with external data (NEW PHASE)
+            try:
+                print("\n🔍 Enhancing dependencies with external data...")
+                enhanced_dependencies = self._enhance_dependencies(dependencies_analysis, config, cache)
+
+                # Merge enhanced data back into dependencies analysis
+                dependencies_analysis["enhanced_data"] = enhanced_dependencies.get("enhanced_data", {})
+                dependencies_analysis["enhancement_metadata"] = enhanced_dependencies.get("enhancement_metadata", {})
+
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                metadata_collector.add_error("dependency_enhancement", e)
+                self.console.print(f"⚠️ Dependency enhancement failed: {e}", style="yellow")
+                # Continue with unenhanced data
+                dependencies_analysis["enhanced_data"] = {}
+                dependencies_analysis["enhancement_metadata"] = {}
+
             # Validate security
             try:
                 results = validate(config, cache, dependencies_analysis)
@@ -196,6 +236,30 @@ class ScannerService:
         
         print()
     
+    def _enhance_dependencies(self, dependencies_analysis: dict, config: dict, cache) -> dict:
+        """Enhance dependencies with external data using the enhancer system."""
+        try:
+            # Initialize enhancer orchestrator with full config
+            orchestrator = EnhancerOrchestrator(config, cache)
+
+            # Enhance all dependencies
+            enhanced_data = orchestrator.enhance_dependencies(dependencies_analysis)
+
+            # Display enhancement statistics
+            stats = orchestrator.get_enhancement_statistics()
+            self.console.print(f"   📦 Enhanced {stats['enhanced_packages']}/{stats['total_packages']} packages")
+            self.console.print(f"   🎯 Success rate: {stats['success_rate']:.1f}%")
+            if stats['cache_hits'] > 0:
+                self.console.print(f"   💾 Cache hits: {stats['cache_hits']} ({stats['cache_hit_rate']:.1f}%)")
+
+            return enhanced_data
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.console.print(f"⚠️ Enhancement failed: {e}", style="yellow")
+            return {"enhanced_data": {}, "enhancement_metadata": {}}
+
     def assess_risk(self, config: dict, results: dict, dependency_data: dict, dependencies_analysis: dict) -> list:
         """Assess risk for dependencies."""
         try:
@@ -207,19 +271,9 @@ class ScannerService:
     def generate_sbom(self, config: dict, dependencies_analysis: dict, dependency_data: dict) -> bool:
         """Generate Software Bill of Materials."""
         try:
-            cve_data = read_json_file("validation_report.json")
-            if cve_data:
-                # Use total packages from dependencies analysis
-                sbom_dependencies = {}
-                for pkg_key, pkg_version in dependencies_analysis.get("resolution_details", {}).items():
-                    sbom_dependencies[pkg_key.lower()] = pkg_version
-                
-                if not sbom_dependencies:
-                    sbom_dependencies = dependency_data
-                
-                generate(sbom_dependencies, cve_data, config)
-                return True
-            return False
+            # Pass transitive analysis directly to the ecosystem-aware generate function
+            generate(dependencies_analysis, config)
+            return True
         except Exception:
             return False
     
@@ -246,16 +300,58 @@ class ScannerService:
                 self.console.print(f"📊 Dependencies analysis results saved to {dependencies_output_file}")
             except Exception as e:
                 metadata_collector.add_error("output_generation", e)
-    
+
+    def _get_classification(self, dependencies_analysis: dict) -> dict:
+        """Get or build classification dictionary from dependency_tree structure (cached).
+
+        Args:
+            dependencies_analysis: Dependencies analysis data containing dependency_tree
+
+        Returns:
+            Dictionary mapping ecosystem -> package_name -> dependency_type (direct/transitive)
+        """
+        # Build classification once from dependency_tree
+        classification = {}
+        dependency_tree = dependencies_analysis.get("dependency_tree", {})
+        for ecosystem, packages in dependency_tree.items():
+            classification[ecosystem] = {}
+            for pkg_key, pkg_info in packages.items():
+                pkg_name = pkg_key.split("==")[0] if "==" in pkg_key else pkg_key
+                classification[ecosystem][pkg_name] = pkg_info.get("type", "unknown")
+        return classification
+
+    def _count_dependencies(self, classification: dict) -> tuple:
+        """Count total, direct, and transitive dependencies from classification.
+
+        Args:
+            classification: Classification dictionary
+
+        Returns:
+            Tuple of (total_packages, direct_count, transitive_count)
+        """
+        total_packages = 0
+        direct_count = 0
+        transitive_count = 0
+
+        for ecosystem, packages in classification.items():
+            if isinstance(packages, dict):
+                for pkg, dep_type in packages.items():
+                    total_packages += 1
+                    if dep_type == "direct":
+                        direct_count += 1
+                    elif dep_type == "transitive":
+                        transitive_count += 1
+
+        return total_packages, direct_count, transitive_count
+
     def _display_scan_progress(self, scan_id: str, dependencies_analysis: dict):
         """Display scan progress information."""
         self.console.print(f"🚀 ZSBOM scan started (ID: {scan_id[:8]})", style="bold blue")
-        
-        dependency_tree = dependencies_analysis.get("dependency_tree", {})
-        total_packages = dependencies_analysis.get("total_packages", 0)
-        
-        direct_count = len([pkg for pkg, info in dependency_tree.items() if info.get("type") == "direct"])
-        transitive_count = total_packages - direct_count
+
+        # Get classification and count dependencies
+        classification = self._get_classification(dependencies_analysis)
+        total_packages, direct_count, transitive_count = self._count_dependencies(classification)
+
         print(f"{direct_count} direct dependencies")
         print(f"{transitive_count} transitive dependencies")
     
@@ -288,15 +384,13 @@ class ScannerService:
         
         # Calculate summary statistics
         high_risk = [s for s in scores if s['risk_level'] == 'high']
-        medium_risk = [s for s in scores if s['risk_level'] == 'medium'] 
+        medium_risk = [s for s in scores if s['risk_level'] == 'medium']
         low_risk = [s for s in scores if s['risk_level'] == 'low']
-        
-        dependency_tree = dependencies_analysis.get("dependency_tree", {})
-        total_packages = dependencies_analysis.get("total_packages", 0)
-        
-        direct_count = len([pkg for pkg, info in dependency_tree.items() if info.get("type") == "direct"])
-        transitive_count = total_packages - direct_count
-        
+
+        # Get classification and count dependencies
+        classification = self._get_classification(dependencies_analysis)
+        total_packages, direct_count, transitive_count = self._count_dependencies(classification)
+
         print("📈 Risk Assessment Summary:")
         print(f"   🔴 High Risk: {len(high_risk)} packages")
         print(f"   🟡 Medium Risk: {len(medium_risk)} packages") 
