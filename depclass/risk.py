@@ -11,52 +11,36 @@ from .risk_calculator import WeightedRiskCalculator
 from .models import PackageRef
 
 
-def parse_package_specifications(dependencies: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
-    """Parse package specifications from enhanced dependency extraction.
-    
-    Takes the new format from enhanced extract.py and creates a structure
-    suitable for the new DeclaredVsInstalledScorer.
-    
-    Args:
-        dependencies: Dictionary mapping file names to package specifications
-        
-    Returns:
-        Dictionary mapping file names to package specifications
-    """
-    package_specs = {}
-    
-    for file_name, packages in dependencies.items():
-        if file_name == "runtime":
-            continue  # Skip runtime packages for specification parsing
-        
-        if packages:
-            package_specs[file_name] = packages
-    
-    return package_specs
-
 
 def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str, str]]) -> Optional[str]:
     """Get the primary declared version for a package based on file priority.
-    
+
+    For direct dependencies, checks actual dependency files in priority order.
+    For transitive dependencies, checks transitive declarations from parent packages.
+
     Args:
         package: Package name
         package_specs: Package specifications from multiple files
-        
+
     Returns:
         Primary declared version string or None if not found
     """
-    file_priority = [
-        "pyproject.toml",
-        "requirements.txt",
-        "setup.py",
-        "setup.cfg",
-        "Pipfile"
-    ]
-    
+    # File priority for direct dependencies
+    file_priority = ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"]
+
+    # Check direct dependency files first (highest priority)
     for file_name in file_priority:
-        if file_name in package_specs and package in package_specs[file_name]:
-            return package_specs[file_name][package]
-    
+        version = package_specs.get(file_name, {}).get(package)
+        if version:
+            return version
+
+    # Check transitive dependency declarations from parent packages
+    for file_name, packages in package_specs.items():
+        if file_name.startswith("transitive_from_"):
+            version = packages.get(package)
+            if version:
+                return version
+
     return None
 
 
@@ -107,8 +91,8 @@ def score_packages(
 
     typosquatting_whitelist = validation_results.get("typosquatting_whitelist", [])
     
-    # Parse package specifications from enhanced format
-    package_specs = parse_package_specifications(dependencies)
+    # Get package specifications from extraction output
+    package_specs = transitive_analysis.get("package_specs", {})
     
     # Process ecosystems separately for risk scoring
     ecosystems_data = transitive_analysis.get("resolution_details", {})
@@ -123,7 +107,8 @@ def score_packages(
 
     def score_single_package(pkg: str, ecosystem: str, packages: Dict[str, str],
                            classification: Dict[str, str],
-                           dependency_tree: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                           dependency_tree: Dict[str, Any],
+                           enhanced_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Score a single package (for parallel execution)."""
         # Get resolved version for this package
         installed_version = packages.get(pkg)
@@ -148,6 +133,8 @@ def score_packages(
             dependency_tree=dependency_tree,
             classification=classification,
             ecosystem=ecosystem,
+            # Pass enhanced data from enhancers to dimension scorers
+            enhanced_data=enhanced_data,
         )
 
         # Add dependency classification and ecosystem information
@@ -175,13 +162,18 @@ def score_packages(
         # Score ALL packages in this ecosystem (both direct and transitive)
         packages_to_score = set(packages.keys())
 
+        # Extract enhanced data from transitive analysis (required for dimension scorers)
+        enhanced_data = transitive_analysis.get("enhanced_data", {})
+        if not enhanced_data:
+            print(f"⚠️ No enhanced data available for ecosystem {ecosystem}, dimension scorers may not work properly")
+
         # Use parallel processing for scoring packages in this ecosystem
         max_workers = min(len(packages_to_score), 10)  # Limit to 10 concurrent workers
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all scoring tasks for this ecosystem
             future_to_pkg = {
-                executor.submit(score_single_package, pkg, ecosystem, packages, classification, dependency_tree): pkg
+                executor.submit(score_single_package, pkg, ecosystem, packages, classification, dependency_tree, enhanced_data): pkg
                 for pkg in packages_to_score
             }
 

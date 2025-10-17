@@ -118,6 +118,7 @@ class ScalibrExtractor(BaseExtractor):
         if not packages:
             return self._create_empty_result()
 
+
         # Group packages by ecosystem
         ecosystems = {}
         ecosystems_detected = set()
@@ -207,6 +208,7 @@ class ScalibrExtractor(BaseExtractor):
 
         # Clean the package name (remove ecosystem prefixes)
         clean_name = self._clean_package_name(name, ecosystem)
+
 
         if not clean_name:
             return
