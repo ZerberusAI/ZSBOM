@@ -25,12 +25,11 @@ class ScannerService:
         self.console = get_console()
     
     def execute_scan(
-        self, 
+        self,
         config_path: Optional[str] = None,
         output: Optional[str] = None,
         skip_sbom: bool = False,
-        ignore_conflicts: bool = False,
-        ecosystem: str = "python"
+        ignore_conflicts: bool = False
     ) -> Tuple[int, dict]:
         """Execute complete scan workflow."""
         
@@ -54,10 +53,31 @@ class ScannerService:
             
             # Extract dependencies
             try:
-                dependencies = extract(config=config, cache=cache, ecosystem=ecosystem)
+                dependencies = extract(config=config, cache=cache)
                 dependency_data = dependencies.get("dependencies", dependencies)
                 dependencies_analysis = dependencies.get("dependencies_analysis", {})
-                
+
+                # Check if repository uses unsupported ecosystems
+                if dependencies_analysis.get("unsupported_repo", False):
+                    self.console.print("\nℹ️  This repository does not contain supported package ecosystems", style="bold blue")
+                    self.console.print(f"📦 Currently supported: {', '.join(dependencies_analysis.get('supported_ecosystems', []))}", style="dim")
+                    self.console.print("💡 ZSBOM will skip security analysis for this repository", style="dim")
+
+                    # Save metadata with unsupported repo status
+                    metadata_collector.update_statistics({
+                        "repository_status": "unsupported_ecosystems",
+                        "unsupported_repo": True,
+                        "supported_ecosystems": dependencies_analysis.get('supported_ecosystems', []),
+                        "status_message": dependencies_analysis.get('status_message', 'No supported ecosystems detected')
+                    })
+                    metadata_file = metadata_collector.save_metadata()
+
+                    self.console.print(f"\n✅ Scan completed - No supported ecosystems detected (ID: {scan_id[:8]})", style="bold green")
+                    self.console.print(f"📋 Scan metadata saved to {metadata_file}", style="dim")
+
+                    # Return exit code 0 (success) with metadata indicating unsupported repo
+                    return 0, metadata_collector.finalize_collection(0)
+
                 # Display progress
                 self._display_scan_progress(scan_id, dependencies_analysis)
                 
@@ -209,15 +229,8 @@ class ScannerService:
         try:
             cve_data = read_json_file("validation_report.json")
             if cve_data:
-                # Use total packages from dependencies analysis
-                sbom_dependencies = {}
-                for pkg_key, pkg_version in dependencies_analysis.get("resolution_details", {}).items():
-                    sbom_dependencies[pkg_key.lower()] = pkg_version
-                
-                if not sbom_dependencies:
-                    sbom_dependencies = dependency_data
-                
-                generate(sbom_dependencies, cve_data, config)
+                # Pass transitive analysis directly to the ecosystem-aware generate function
+                generate(dependencies_analysis, cve_data, config)
                 return True
             return False
         except Exception:
@@ -246,16 +259,45 @@ class ScannerService:
                 self.console.print(f"📊 Dependencies analysis results saved to {dependencies_output_file}")
             except Exception as e:
                 metadata_collector.add_error("output_generation", e)
-    
+
+    def _build_classification_from_dependency_tree(self, dependencies_analysis: dict) -> dict:
+        """Build classification dictionary from dependency_tree structure.
+
+        Args:
+            dependencies_analysis: Dependencies analysis data containing dependency_tree
+
+        Returns:
+            Dictionary mapping ecosystem -> package_name -> dependency_type (direct/transitive)
+        """
+        classification = {}
+        dependency_tree = dependencies_analysis.get("dependency_tree", {})
+        for ecosystem, packages in dependency_tree.items():
+            classification[ecosystem] = {}
+            for pkg_key, pkg_info in packages.items():
+                pkg_name = pkg_key.split("==")[0] if "==" in pkg_key else pkg_key
+                classification[ecosystem][pkg_name] = pkg_info.get("type", "unknown")
+        return classification
+
     def _display_scan_progress(self, scan_id: str, dependencies_analysis: dict):
         """Display scan progress information."""
         self.console.print(f"🚀 ZSBOM scan started (ID: {scan_id[:8]})", style="bold blue")
-        
-        dependency_tree = dependencies_analysis.get("dependency_tree", {})
-        total_packages = dependencies_analysis.get("total_packages", 0)
-        
-        direct_count = len([pkg for pkg, info in dependency_tree.items() if info.get("type") == "direct"])
-        transitive_count = total_packages - direct_count
+
+        # Calculate totals from ecosystem-specific classification
+        total_packages = 0
+        direct_count = 0
+        transitive_count = 0
+
+        classification = self._build_classification_from_dependency_tree(dependencies_analysis)
+
+        for ecosystem, packages in classification.items():
+            if isinstance(packages, dict):
+                for pkg, dep_type in packages.items():
+                    total_packages += 1
+                    if dep_type == "direct":
+                        direct_count += 1
+                    elif dep_type == "transitive":
+                        transitive_count += 1
+
         print(f"{direct_count} direct dependencies")
         print(f"{transitive_count} transitive dependencies")
     
@@ -288,14 +330,23 @@ class ScannerService:
         
         # Calculate summary statistics
         high_risk = [s for s in scores if s['risk_level'] == 'high']
-        medium_risk = [s for s in scores if s['risk_level'] == 'medium'] 
+        medium_risk = [s for s in scores if s['risk_level'] == 'medium']
         low_risk = [s for s in scores if s['risk_level'] == 'low']
-        
-        dependency_tree = dependencies_analysis.get("dependency_tree", {})
-        total_packages = dependencies_analysis.get("total_packages", 0)
-        
-        direct_count = len([pkg for pkg, info in dependency_tree.items() if info.get("type") == "direct"])
-        transitive_count = total_packages - direct_count
+
+        # Calculate totals from ecosystem-specific classification
+        total_packages = 0
+        direct_count = 0
+        transitive_count = 0
+
+        classification = self._build_classification_from_dependency_tree(dependencies_analysis)
+        for ecosystem, packages in classification.items():
+            if isinstance(packages, dict):
+                for pkg, dep_type in packages.items():
+                    total_packages += 1
+                    if dep_type == "direct":
+                        direct_count += 1
+                    elif dep_type == "transitive":
+                        transitive_count += 1
         
         print("📈 Risk Assessment Summary:")
         print(f"   🔴 High Risk: {len(high_risk)} packages")

@@ -9,7 +9,6 @@ validation_rules:
 transitive_analysis:
   pip_compile_timeout: 120  # seconds
   cache_ttl_hours: 24  # hours to cache pip-compile results
-  include_in_validation: true  # Include transitive dependencies in security validation
   include_in_risk_scoring: true  # Include transitive dependencies in risk scoring
   apply_depth_weighting: false  # Apply depth-based risk weighting (future enhancement)
   max_depth_to_score: 5  # Limit scoring depth for performance (future enhancement)

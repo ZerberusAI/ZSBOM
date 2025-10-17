@@ -51,6 +51,10 @@ class TyposquatHeuristicsScorer(DimensionScorer):
     - Comprehensive error handling with technical debugging information
     """
 
+    # Cache table versioning constants
+    CACHE_TABLE_VERSION = "v2"
+    CACHE_TABLE_NAME = f"top_packages_{CACHE_TABLE_VERSION}"
+
     def __init__(self, cache_db_path: str = ".cache/zsbom.db"):
         """Initialize the typosquat heuristics scorer.
         
@@ -69,7 +73,13 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             Exception: If cache database initialization fails (logged, not propagated)
         """
         self.cache_db_path = cache_db_path
-        self.top_packages_url = "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json"
+
+        # Ecosystem-specific top packages URLs
+        self.ecosystem_urls = {
+            "python": "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json",
+            "npm": "https://github.com/tristan-f-r/npm-rank/releases/download/latest/raw.json"
+        }
+
         self.pypi_service = get_pypi_service()
         
         # Character substitution patterns (bidirectional)
@@ -152,26 +162,45 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         self._init_cache()
     
     def _init_cache(self):
-        """Initialize SQLite cache database."""
+        """Initialize SQLite cache database with versioned table approach."""
         try:
             conn = sqlite3.connect(self.cache_db_path)
             cursor = conn.cursor()
-            
-            # Create tables if they don't exist
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS top_packages (
+
+            # Create new versioned table
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {self.CACHE_TABLE_NAME} (
                     id INTEGER PRIMARY KEY,
+                    ecosystem TEXT,
                     package_name TEXT,
                     downloads INTEGER,
                     cached_at TIMESTAMP,
-                    ttl_hours INTEGER DEFAULT 48
+                    ttl_hours INTEGER DEFAULT 48,
+                    UNIQUE(ecosystem, package_name)
                 )
             ''')
-            
-            
+
+            # Clean up old versions (keep only current)
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name LIKE 'top_packages_%'
+                AND name != ?
+            """, (self.CACHE_TABLE_NAME,))
+
+            old_tables = cursor.fetchall()
+            for (old_table,) in old_tables:
+                cursor.execute(f'DROP TABLE IF EXISTS {old_table}')
+                logger.info(f"Dropped old cache table: {old_table}")
+
+            # Also clean up the original non-versioned table if it exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='top_packages'")
+            if cursor.fetchone():
+                cursor.execute('DROP TABLE top_packages')
+                logger.info("Dropped original non-versioned top_packages table")
+
             conn.commit()
             conn.close()
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize SQLite cache database at {self.cache_db_path}: {e}. "
                         f"Check file permissions and disk space. Typosquatting detection may be degraded.")
@@ -193,37 +222,44 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         except Exception:
             return False
     
-    def _get_top_packages(self) -> List[Dict[str, Any]]:
+    def _get_top_packages(self, ecosystem: str = "python") -> List[Dict[str, Any]]:
         """Get top 15K packages from cache or external API.
-        
+
+        Args:
+            ecosystem: Ecosystem name (python, npm, etc.)
+
         Returns:
             List of package dictionaries with name and download count
         """
         try:
+            # Get URL for the ecosystem
+            url = self.ecosystem_urls.get(ecosystem, self.ecosystem_urls["python"])
+
             # Check cache first
             conn = sqlite3.connect(self.cache_db_path)
             cursor = conn.cursor()
-            
-            cursor.execute('''
+
+            cursor.execute(f'''
                 SELECT package_name, downloads, cached_at, ttl_hours
-                FROM top_packages
+                FROM {self.CACHE_TABLE_NAME}
+                WHERE ecosystem = ?
                 ORDER BY downloads DESC
                 LIMIT 15000
-            ''')
-            
+            ''', (ecosystem,))
+
             cached_packages = cursor.fetchall()
-            
+
             # Check if cache is valid
             if cached_packages:
                 first_entry = cached_packages[0]
                 if self._is_cache_valid(first_entry[2], first_entry[3]):
                     conn.close()
                     return [{'project': row[0], 'download_count': row[1]} for row in cached_packages]
-            
+
             # Cache miss or expired, fetch from API
-            logger.info("Fetching top packages from external API...")
-            
-            response = self._make_request_with_retry(self.top_packages_url)
+            logger.info(f"Fetching top {ecosystem} packages from external API...")
+
+            response = self._make_request_with_retry(url)
             if not response:
                 # Network unavailable, use stale cached data if available
                 if cached_packages:
@@ -235,16 +271,35 @@ class TyposquatHeuristicsScorer(DimensionScorer):
                     return []
             
             data = response.json()
-            packages = data.get('rows', [])[:15000]  # Limit to top 15K
-            
-            # Clear old cache and insert new data
-            cursor.execute('DELETE FROM top_packages')
-            
+
+            # Handle different API response formats by ecosystem
+            if ecosystem == "python":
+                # Python API returns {"rows": [{"project": "name", "download_count": 123}]}
+                packages = data.get('rows', [])[:15000]  # Limit to top 15K
+            elif ecosystem == "npm":
+                # NPM API returns [{"name": "package", ...}] (direct list)
+                raw_packages = data[:15000] if isinstance(data, list) else []
+                # Convert NPM format to our expected format
+                packages = []
+                for i, pkg in enumerate(raw_packages):
+                    if isinstance(pkg, dict) and 'name' in pkg:
+                        packages.append({
+                            'project': pkg['name'],
+                            'download_count': len(raw_packages) - i  # Use rank as pseudo download count
+                        })
+            else:
+                # Unknown ecosystem, try Python format as fallback
+                packages = data.get('rows', [])[:15000] if isinstance(data, dict) else []
+
+            # Clear old cache for this ecosystem and insert new data
+            cursor.execute(f'DELETE FROM {self.CACHE_TABLE_NAME} WHERE ecosystem = ?', (ecosystem,))
+
             for package in packages:
-                cursor.execute('''
-                    INSERT INTO top_packages (package_name, downloads, cached_at, ttl_hours)
-                    VALUES (?, ?, ?, ?)
+                cursor.execute(f'''
+                    INSERT OR REPLACE INTO {self.CACHE_TABLE_NAME} (ecosystem, package_name, downloads, cached_at, ttl_hours)
+                    VALUES (?, ?, ?, ?, ?)
                 ''', (
+                    ecosystem,
                     package['project'],
                     package['download_count'],
                     datetime.now().isoformat(),
@@ -258,7 +313,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
             return packages
             
         except Exception as e:
-            logger.error(f"Failed to fetch top packages from {self.top_packages_url}: {e}. "
+            logger.error(f"Failed to fetch top packages from {url}: {e}. "
                         f"Check network connectivity and API availability. Using cached data if available.")
             return []
     
@@ -600,6 +655,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         installed_version: str,
         declared_version: Optional[str] = None,
         typosquatting_whitelist: Optional[List[str]] = None,
+        ecosystem: str = "python",
         **kwargs: Any
     ) -> float:
         """Calculate typosquatting risk score using 5-factor analysis.
@@ -634,10 +690,10 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         # Check whitelist first
         if typosquatting_whitelist and package.lower() in [p.lower() for p in typosquatting_whitelist]:
             return 10.0
-        
+
         try:
             # Get top packages first, then use them for metadata lookup
-            top_packages = self._get_top_packages()
+            top_packages = self._get_top_packages(ecosystem)
             
             # Get package metadata with top packages data for download count reuse
             package_metadata = self._get_pypi_metadata(package, top_packages)
@@ -670,6 +726,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         installed_version: str,
         declared_version: Optional[str] = None,
         typosquatting_whitelist: Optional[List[str]] = None,
+        ecosystem: str = "python",
         **kwargs: Any
     ) -> Dict[str, Any]:
         """Get detailed typosquatting scoring information.
@@ -684,7 +741,7 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         Returns:
             Dictionary containing detailed scoring information
         """
-        score = self.score(package, installed_version, declared_version, typosquatting_whitelist, **kwargs)
+        score = self.score(package, installed_version, declared_version, typosquatting_whitelist, ecosystem, **kwargs)
         
         # Check whitelist first
         if typosquatting_whitelist and package.lower() in [p.lower() for p in typosquatting_whitelist]:
@@ -705,11 +762,11 @@ class TyposquatHeuristicsScorer(DimensionScorer):
         
         try:
             # Get top packages first, then use them for metadata lookup
-            top_packages = self._get_top_packages()
-            
+            top_packages = self._get_top_packages(ecosystem)
+
             # Get package metadata with top packages data for download count reuse
             package_metadata = self._get_pypi_metadata(package, top_packages)
-            
+
             # Calculate all factors with details
             factor1_score, factor1_details = self._calculate_string_distance_score(package, top_packages)
             factor2_score, factor2_details = self._calculate_downloads_similarity_score(package, package_metadata, top_packages, factor1_details)

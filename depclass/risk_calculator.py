@@ -49,6 +49,7 @@ class WeightedRiskCalculator:
         declared_version: Optional[str] = None,
         cve_list: Optional[List[Dict[str, Any]]] = None,
         typosquatting_whitelist: Optional[List[str]] = None,
+        ecosystem: str = "python",
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """Calculate comprehensive risk score for a package."""
@@ -59,6 +60,9 @@ class WeightedRiskCalculator:
 
         dimension_scores: Dict[RiskDimension, float] = {}
         dimension_details: Dict[RiskDimension, Dict[str, Any]] = {}
+
+        # Add ecosystem to kwargs for all scorers
+        kwargs['ecosystem'] = ecosystem
 
         for dim, scorer in self.scorers.items():
             dimension_scores[dim] = scorer.score(

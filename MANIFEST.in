@@ -14,6 +14,23 @@ recursive-include examples *.json
 # Include test files (for source distributions)
 recursive-include tests *.py
 
+# Include Scalibr Go build files for auto-compilation
+include depclass/extractors/scalibr/go.mod
+include depclass/extractors/scalibr/go.sum
+include depclass/extractors/scalibr/scalibr_wrapper.go
+include depclass/extractors/scalibr/Makefile
+include depclass/extractors/scalibr/build.py
+recursive-include depclass/extractors/scalibr/classifiers *.py
+
+# Exclude pre-built Scalibr binaries (they will be built on installation)
+exclude depclass/extractors/scalibr/scalibr.so
+exclude depclass/extractors/scalibr/scalibr.dylib
+exclude depclass/extractors/scalibr/scalibr.dll
+exclude depclass/extractors/scalibr/scalibr-*.so
+exclude depclass/extractors/scalibr/scalibr-*.dylib
+exclude depclass/extractors/scalibr/scalibr-*.dll
+exclude depclass/extractors/scalibr/scalibr-*.h
+
 # Exclude runtime output files and temporary data
 exclude sbom.json
 exclude risk_report.json
