@@ -71,6 +71,11 @@ test = [
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["depclass*"]
+exclude = ["assets*", "tests*", "*.egg-info"]
+
 [project.urls]
 Homepage = "https://github.com/ZerberusAI/ZSBOM"
 Repository = "https://github.com/ZerberusAI/ZSBOM"
