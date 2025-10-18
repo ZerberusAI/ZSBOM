@@ -85,7 +85,7 @@ class TestUploadOrchestratorIntegration:
             "risk_report.json": {"status": "uploaded", "url": "https://s3.aws.com/file2"}
         }
         mock_completion_response = Mock()
-        mock_completion_response.report_url = "https://app.com/scan/123"
+        mock_completion_response.report_url = "https://app.zerberus.ai/trace-ai/dashboard"
         mock_client.acknowledge_completion.return_value = mock_completion_response
 
         # Create test files
@@ -236,7 +236,7 @@ class TestUploadOrchestratorIntegration:
             mock_client.initiate_scan.return_value = mock_scan_response
             mock_client.upload_files.return_value = {"scan_metadata.json": {"status": "uploaded"}}
             mock_completion_response = Mock()
-            mock_completion_response.report_url = "https://app.com/scan/456"
+            mock_completion_response.report_url = "https://app.zerberus.ai/trace-ai/dashboard"
             mock_client.acknowledge_completion.return_value = mock_completion_response
 
             # Execute workflow

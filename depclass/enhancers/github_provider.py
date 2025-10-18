@@ -6,6 +6,7 @@ from the GitHub API for packages hosted on GitHub.
 """
 
 import logging
+import os
 import re
 import requests
 import time
@@ -43,7 +44,11 @@ class GitHubProvider(CacheableMixin):
 
         # GitHub API configuration
         github_config = config.get("enhancers", {}).get("github", {})
-        self.github_token = github_config.get("token")
+        self.github_token = (
+            github_config.get("token") or
+            os.getenv("GITHUB_TOKEN") or
+            os.getenv("GH_TOKEN")
+        )
         self.api_base_url = "https://api.github.com"
 
         # HTTP session
