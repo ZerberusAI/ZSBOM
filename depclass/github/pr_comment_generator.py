@@ -121,7 +121,7 @@ class PRCommentGenerator:
 <img src="{self.LOGO_URL}" alt="Zerberus" width="{self.LOGO_WIDTH}"/>
 
 # :shield: ZSBOM Security Scan Results
-**Powered by Trace-AI by Zerberus**
+**Powered by [Trace-AI](https://trace-ai.dev)**
 
 </div>
 
@@ -250,7 +250,7 @@ class PRCommentGenerator:
 """
 
         for vuln in vulnerabilities:
-            pkg_name = vuln.get("package", "unknown")
+            pkg_name = vuln.get("package_name", "unknown")
             ecosystem = vuln.get("ecosystem", "unknown")
             ecosystem_emoji = self._get_ecosystem_emoji(ecosystem)
             cve_id = vuln.get("id", "N/A")
@@ -458,9 +458,9 @@ class PRCommentGenerator:
                 vuln_copy = vuln.copy()
                 vuln_copy["ecosystem"] = ecosystem
                 # Extract package name from affected versions or use first affected version
-                if "package" not in vuln_copy:
+                if "package_name" not in vuln_copy:
                     affected = vuln.get("affected_versions", [])
-                    vuln_copy["package"] = affected[0] if affected else "unknown"
+                    vuln_copy["package_name"] = affected[0] if affected else "unknown"
                 vulnerabilities.append(vuln_copy)
 
         return vulnerabilities

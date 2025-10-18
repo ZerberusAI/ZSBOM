@@ -99,19 +99,18 @@ class UploadOrchestrator:
             return UploadResult(success=False, error=str(e))
 
         finally:
-            # Phase 5: Generate PR comment for GitHub Actions
-            # Always try to generate PR comment even if upload failed
-            # if scan_metadata.get("ci_context", {}).get("is_ci") and \
-            #    scan_metadata.get("ci_context", {}).get("event_type") == "pull_request":
-            try:
-                # Use fallback URL if report_url wasn't set (upload failed)
-                # Read dashboard URL from environment or use default
-                dashboard_base_url = os.getenv("ZERBERUS_DASHBOARD_URL", "https://app.zerberus.ai")
-                final_report_url = report_url if report_url else f"{dashboard_base_url}/trace-ai/dashboard"
-                self._generate_pr_comment_file(scan_metadata, threshold_result, final_report_url)
-            except Exception as comment_error:
-                # Don't fail the entire upload if PR comment generation fails
-                self.console.print(f"⚠️ Failed to generate PR comment: {str(comment_error)}", style="yellow")
+            # Phase 5: Generate PR comment for GitHub Actions (only for pull requests)
+            if scan_metadata.get("ci_context", {}).get("is_ci") and \
+               scan_metadata.get("ci_context", {}).get("event_type") == "pull_request":
+                try:
+                    # Use fallback URL if report_url wasn't set (upload failed)
+                    # Read dashboard URL from environment or use default
+                    dashboard_base_url = os.getenv("ZERBERUS_DASHBOARD_URL", "https://app.zerberus.ai")
+                    final_report_url = report_url if report_url else f"{dashboard_base_url}/trace-ai/dashboard"
+                    self._generate_pr_comment_file(scan_metadata, threshold_result, final_report_url)
+                except Exception as comment_error:
+                    # Don't fail the entire upload if PR comment generation fails
+                    self.console.print(f"⚠️ Failed to generate PR comment: {str(comment_error)}", style="yellow")
 
     def _initiate_scan(self, scan_metadata: dict) -> str:
         """Initiate scan using enhanced metadata and proper dataclass objects."""
