@@ -105,7 +105,9 @@ class UploadOrchestrator:
             #    scan_metadata.get("ci_context", {}).get("event_type") == "pull_request":
             try:
                 # Use fallback URL if report_url wasn't set (upload failed)
-                final_report_url = report_url if report_url else "https://app.zerberus.ai/trace-ai/dashboard"
+                # Read dashboard URL from environment or use default
+                dashboard_base_url = os.getenv("ZERBERUS_DASHBOARD_URL", "https://app.zerberus.ai")
+                final_report_url = report_url if report_url else f"{dashboard_base_url}/trace-ai/dashboard"
                 self._generate_pr_comment_file(scan_metadata, threshold_result, final_report_url)
             except Exception as comment_error:
                 # Don't fail the entire upload if PR comment generation fails
