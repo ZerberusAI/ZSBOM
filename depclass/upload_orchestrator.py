@@ -44,7 +44,9 @@ class UploadOrchestrator:
     def execute_upload_workflow(self, scan_files: Dict[str, str], scan_metadata: dict) -> UploadResult:
         """Execute simplified upload workflow with Rich progress."""
         start_time = time.time()
-        
+        threshold_result = None
+        report_url = None
+
         try:
             # Basic file validation
             valid_files = {k: v for k, v in scan_files.items() if os.path.exists(v)}
@@ -63,17 +65,13 @@ class UploadOrchestrator:
             # Phase 2: Upload files with progress
             self.console.print("📤 Uploading files...", style="cyan")
             file_results = self._upload_files_with_progress(scan_id, valid_files)
-            
-            # Phase 3: Complete upload
-            report_url = self._complete_upload(scan_id, file_results)
-            
-            # Phase 4: Run threshold validation if threshold config is available
+
+            # Phase 3: Run threshold validation if threshold config is available
+            # Do this BEFORE completing upload so we have threshold results even if upload fails
             threshold_result = self._run_threshold_validation()
 
-            # Phase 5: Generate PR comment for GitHub Actions (if running in CI on a PR)
-            if scan_metadata.get("ci_context", {}).get("is_ci") and \
-               scan_metadata.get("ci_context", {}).get("event_type") == "pull_request":
-                self._generate_pr_comment_file(scan_metadata, threshold_result, report_url)
+            # Phase 4: Complete upload
+            report_url = self._complete_upload(scan_id, file_results)
 
             # Success message
             self.console.print(f"✅ Upload completed successfully!", style="bold green")
@@ -99,7 +97,20 @@ class UploadOrchestrator:
         except Exception as e:
             self.console.print(f"❌ Upload failed: {str(e)}", style="red")
             return UploadResult(success=False, error=str(e))
-    
+
+        finally:
+            # Phase 5: Generate PR comment for GitHub Actions
+            # Always try to generate PR comment even if upload failed
+            # if scan_metadata.get("ci_context", {}).get("is_ci") and \
+            #    scan_metadata.get("ci_context", {}).get("event_type") == "pull_request":
+            try:
+                # Use fallback URL if report_url wasn't set (upload failed)
+                final_report_url = report_url if report_url else "https://app.zerberus.ai/trace-ai/dashboard"
+                self._generate_pr_comment_file(scan_metadata, threshold_result, final_report_url)
+            except Exception as comment_error:
+                # Don't fail the entire upload if PR comment generation fails
+                self.console.print(f"⚠️ Failed to generate PR comment: {str(comment_error)}", style="yellow")
+
     def _initiate_scan(self, scan_metadata: dict) -> str:
         """Initiate scan using enhanced metadata and proper dataclass objects."""
         
