@@ -14,11 +14,11 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from depclass.upload.models import (
-    TraceAIConfig, 
-    UploadResult, 
+    TraceAIConfig,
+    UploadResult,
     ThresholdResult,
-    RepositoryMetadata, 
-    ScanMetadata, 
+    RepositoryMetadata,
+    ScanMetadata,
     ScanInitiationRequest,
     CompletionRequest,
     UploadStatus,
@@ -26,6 +26,7 @@ from depclass.upload.models import (
 )
 from depclass.upload.api_client import ZerberusAPIClient
 from depclass.threshold_checker import ThresholdChecker, ThresholdConfig as ZSBOMThresholdConfig
+from depclass.github.pr_comment_generator import PRCommentGenerator
 
 
 class UploadOrchestrator:
@@ -68,11 +69,16 @@ class UploadOrchestrator:
             
             # Phase 4: Run threshold validation if threshold config is available
             threshold_result = self._run_threshold_validation()
-            
+
+            # Phase 5: Generate PR comment for GitHub Actions (if running in CI on a PR)
+            if scan_metadata.get("ci_context", {}).get("is_ci") and \
+               scan_metadata.get("ci_context", {}).get("event_type") == "pull_request":
+                self._generate_pr_comment_file(scan_metadata, threshold_result, report_url)
+
             # Success message
             self.console.print(f"✅ Upload completed successfully!", style="bold green")
             self.console.print(f"📊 Report URL: {report_url}", style="green")
-            
+
             # Display threshold results if validation was run
             if threshold_result:
                 if threshold_result.should_fail_build:
@@ -432,3 +438,30 @@ class UploadOrchestrator:
                 
         except Exception as e:
             self.console.print(f"⚠️ Failed to update metadata with threshold results: {str(e)}", style="yellow")
+
+    def _generate_pr_comment_file(
+        self,
+        scan_metadata: dict,
+        threshold_result: Optional[ThresholdResult],
+        report_url: str
+    ) -> None:
+        """Generate PR comment markdown file for GitHub Actions."""
+        try:
+            generator = PRCommentGenerator(
+                validation_report_path="validation_report.json",
+                risk_report_path="risk_report.json",
+                scan_metadata=scan_metadata,
+                threshold_result=threshold_result,
+                report_url=report_url
+            )
+
+            comment_content = generator.generate()
+
+            # Write to file for GitHub workflow to read
+            with open("pr_comment.md", "w", encoding="utf-8") as f:
+                f.write(comment_content)
+
+            self.console.print("📝 Generated PR comment file: pr_comment.md", style="dim")
+
+        except Exception as e:
+            self.console.print(f"⚠️ Failed to generate PR comment: {str(e)}", style="yellow")
