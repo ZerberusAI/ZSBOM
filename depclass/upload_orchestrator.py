@@ -14,11 +14,11 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from depclass.upload.models import (
-    TraceAIConfig, 
-    UploadResult, 
+    TraceAIConfig,
+    UploadResult,
     ThresholdResult,
-    RepositoryMetadata, 
-    ScanMetadata, 
+    RepositoryMetadata,
+    ScanMetadata,
     ScanInitiationRequest,
     CompletionRequest,
     UploadStatus,
@@ -26,6 +26,7 @@ from depclass.upload.models import (
 )
 from depclass.upload.api_client import ZerberusAPIClient
 from depclass.threshold_checker import ThresholdChecker, ThresholdConfig as ZSBOMThresholdConfig
+from depclass.github.pr_comment_generator import PRCommentGenerator
 
 
 class UploadOrchestrator:
@@ -43,7 +44,9 @@ class UploadOrchestrator:
     def execute_upload_workflow(self, scan_files: Dict[str, str], scan_metadata: dict) -> UploadResult:
         """Execute simplified upload workflow with Rich progress."""
         start_time = time.time()
-        
+        threshold_result = None
+        report_url = None
+
         try:
             # Basic file validation
             valid_files = {k: v for k, v in scan_files.items() if os.path.exists(v)}
@@ -62,17 +65,18 @@ class UploadOrchestrator:
             # Phase 2: Upload files with progress
             self.console.print("📤 Uploading files...", style="cyan")
             file_results = self._upload_files_with_progress(scan_id, valid_files)
-            
-            # Phase 3: Complete upload
-            report_url = self._complete_upload(scan_id, file_results)
-            
-            # Phase 4: Run threshold validation if threshold config is available
+
+            # Phase 3: Run threshold validation if threshold config is available
+            # Do this BEFORE completing upload so we have threshold results even if upload fails
             threshold_result = self._run_threshold_validation()
-            
+
+            # Phase 4: Complete upload
+            report_url = self._complete_upload(scan_id, file_results)
+
             # Success message
             self.console.print(f"✅ Upload completed successfully!", style="bold green")
             self.console.print(f"📊 Report URL: {report_url}", style="green")
-            
+
             # Display threshold results if validation was run
             if threshold_result:
                 if threshold_result.should_fail_build:
@@ -93,7 +97,21 @@ class UploadOrchestrator:
         except Exception as e:
             self.console.print(f"❌ Upload failed: {str(e)}", style="red")
             return UploadResult(success=False, error=str(e))
-    
+
+        finally:
+            # Phase 5: Generate PR comment for GitHub Actions (only for pull requests)
+            if scan_metadata.get("ci_context", {}).get("is_ci") and \
+               scan_metadata.get("ci_context", {}).get("event_type") == "pull_request":
+                try:
+                    # Use fallback URL if report_url wasn't set (upload failed)
+                    # Read dashboard URL from environment or use default
+                    dashboard_base_url = os.getenv("ZERBERUS_DASHBOARD_URL", "https://app.zerberus.ai")
+                    final_report_url = report_url if report_url else f"{dashboard_base_url}/trace-ai/dashboard"
+                    self._generate_pr_comment_file(scan_metadata, threshold_result, final_report_url)
+                except Exception as comment_error:
+                    # Don't fail the entire upload if PR comment generation fails
+                    self.console.print(f"⚠️ Failed to generate PR comment: {str(comment_error)}", style="yellow")
+
     def _initiate_scan(self, scan_metadata: dict) -> str:
         """Initiate scan using enhanced metadata and proper dataclass objects."""
         
@@ -432,3 +450,30 @@ class UploadOrchestrator:
                 
         except Exception as e:
             self.console.print(f"⚠️ Failed to update metadata with threshold results: {str(e)}", style="yellow")
+
+    def _generate_pr_comment_file(
+        self,
+        scan_metadata: dict,
+        threshold_result: Optional[ThresholdResult],
+        report_url: str
+    ) -> None:
+        """Generate PR comment markdown file for GitHub Actions."""
+        try:
+            generator = PRCommentGenerator(
+                validation_report_path="validation_report.json",
+                risk_report_path="risk_report.json",
+                scan_metadata=scan_metadata,
+                threshold_result=threshold_result,
+                report_url=report_url
+            )
+
+            comment_content = generator.generate()
+
+            # Write to file for GitHub workflow to read
+            with open("pr_comment.md", "w", encoding="utf-8") as f:
+                f.write(comment_content)
+
+            self.console.print("📝 Generated PR comment file: pr_comment.md", style="dim")
+
+        except Exception as e:
+            self.console.print(f"⚠️ Failed to generate PR comment: {str(e)}", style="yellow")

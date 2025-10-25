@@ -130,21 +130,28 @@ class ThresholdChecker:
             VulnerabilityCounts with counts by severity
         """
         counts = VulnerabilityCounts()
-        
+
         self.logger.debug(f"Extracting vulnerability counts from report structure: {list(validation_report.keys())}")
-        
-        # Handle the actual ZSBOM validation report structure
-        # Actual structure: validation_report -> cve_issues -> [vuln] -> severity
-        cve_issues = validation_report.get("cve_issues", [])
-        
-        self.logger.debug(f"Found {len(cve_issues)} CVE issues in validation report")
-        
+
+        # Handle multi-ecosystem validation report structure
+        # Structure: validation_report -> ecosystems -> {ecosystem} -> cve_issues -> [vuln] -> severity
+        cve_issues = []
+        ecosystems = validation_report.get("ecosystems", {})
+
+        # Collect CVE issues from all ecosystems
+        for ecosystem_name, ecosystem_data in ecosystems.items():
+            ecosystem_cves = ecosystem_data.get("cve_issues", [])
+            cve_issues.extend(ecosystem_cves)
+            self.logger.debug(f"Found {len(ecosystem_cves)} CVE issues in {ecosystem_name} ecosystem")
+
+        self.logger.debug(f"Found {len(cve_issues)} total CVE issues across all ecosystems")
+
         for vuln in cve_issues:
             severity = vuln.get("severity", "").lower()
             package_name = vuln.get("package_name", "unknown")
-            
+
             self.logger.debug(f"Processing vulnerability: {package_name} - {severity.upper()}")
-            
+
             if severity == "critical":
                 counts.critical += 1
             elif severity == "high":

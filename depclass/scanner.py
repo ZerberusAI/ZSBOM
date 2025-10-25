@@ -170,22 +170,16 @@ class ScannerService:
     def _check_vulnerability_thresholds(self, validation_results: dict):
         """Check vulnerability thresholds from API configuration."""
         try:
-            # Get threshold configuration from environment variables (set by GitHub Actions)
-            api_url = os.getenv("ZERBERUS_API_URL")
-            if not api_url:
-                # No API URL configured, skip threshold checking
-                return None
-            
-            # Load scan metadata to get threshold configuration
+            # Load scan metadata to get threshold configuration from API
             try:
                 with open("scan_metadata.json", "r") as f:
                     scan_metadata = json.load(f)
-                    
+
                 threshold_config_data = scan_metadata.get("threshold_config")
                 if not threshold_config_data or not threshold_config_data.get("enabled", False):
-                    # Threshold checking not enabled
+                    # Threshold checking not enabled by API
                     return None
-                    
+
                 # Create threshold configuration
                 threshold_config = ThresholdConfig(
                     enabled=threshold_config_data.get("enabled", False),
@@ -195,21 +189,23 @@ class ScannerService:
                     max_score_threshold=threshold_config_data.get("max_score_threshold", 50),
                     fail_on_critical=threshold_config_data.get("fail_on_critical", True),
                 )
-                
+
                 # Create threshold checker and check thresholds
                 checker = ThresholdChecker(threshold_config)
                 result = checker.check_thresholds(validation_results)
-                
+
                 # Display threshold checking results
                 if result:
                     self._display_threshold_results(result)
-                
+
                 return result
-                
+
             except FileNotFoundError:
-                # No scan metadata file, skip threshold checking
+                # No scan metadata file - unable to reach Zerberus server
+                self.console.print("⚠️  Unable to reach Zerberus server for threshold validation", style="bold yellow")
+                self.console.print("   Pipeline will continue without threshold checks", style="dim")
                 return None
-                
+
         except Exception as e:
             self.console.print(f"⚠️ Threshold checking failed: {str(e)}", style="bold yellow")
             return None

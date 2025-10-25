@@ -122,6 +122,14 @@ caching:
   path: ".cache/zsbom.db"
   ttl_hours: 24
 
+# External data enhancers
+enhancers:
+  github:
+    # GitHub token for API authentication (increases rate limit from 60/hour to 5000/hour)
+    # Can be set here or via GITHUB_TOKEN / GH_TOKEN environment variables
+    # In GitHub Actions, use: secrets.GITHUB_TOKEN (automatically provided)
+    token: ""
+
 # NEW: Trace-AI upload configuration (Phase 5)
 trace_ai:
   upload:
