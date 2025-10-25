@@ -5,6 +5,8 @@ import json
 import os
 from typing import Optional, Tuple
 
+from rich.table import Table
+
 from depclass.db.vulnerability import VulnerabilityCache
 from depclass.extract import extract
 from depclass.enhancers.orchestrator import EnhancerOrchestrator
@@ -356,32 +358,55 @@ class ScannerService:
         print(f"{transitive_count} transitive dependencies")
     
     def _display_risk_results(self, scores: list, dependencies_analysis: dict):
-        """Display risk assessment results."""
+        """Display risk assessment results using Rich table."""
         if not scores:
             return
-            
-        print("\n📊 Risk Assessment Results:")
-        print("=" * 80)
-        for score in scores:
-            package = score['package']
-            final_score = score['final_score'] 
-            risk_level = score['risk_level']
-            dependency_type = score.get('dependency_type', 'unknown')
 
-            if risk_level == "high":
+        # Filter high risk packages for table display
+        high_risk_scores = [s for s in scores if s['risk_level'] == 'high']
+
+        if high_risk_scores:
+            self.console.print("\n📊 Risk Assessment Results:", style="bold blue")
+
+            # Create table
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("Package", style="white", no_wrap=False, width=25)
+            table.add_column("Score", justify="right", style="white", width=7)
+            table.add_column("Risk", justify="center", style="white", width=6)
+            table.add_column("Type", justify="center", style="white", width=15)
+            table.add_column("Decl/In", justify="right", style="white", width=7)
+            table.add_column("CVEs", justify="right", style="white", width=6)
+            table.add_column("CWE", justify="right", style="white", width=5)
+            table.add_column("Abandon", justify="right", style="white", width=8)
+            table.add_column("Typosquat", justify="right", style="white", width=9)
+
+            # Add rows for each high-risk package
+            for score in high_risk_scores:
+                package = score['package']
+                final_score = score['final_score']
+                risk_level = score['risk_level']
+                dependency_type = score.get('dependency_type', 'unknown')
+                dimensions = score['dimension_scores']
+
+                # Risk emoji and styling
                 risk_emoji = "🔴" if risk_level == "high" else "🟡" if risk_level == "medium" else "🟢"
                 type_indicator = "📦" if dependency_type == "direct" else "⬇️" if dependency_type == "transitive" else "❓"
-                print(f"{risk_emoji} {type_indicator} {package} - Score: {final_score}/100 ({risk_level.upper()} RISK, {dependency_type.upper()})")
-                
-                # Display dimension breakdown
-                dimensions = score['dimension_scores']
-                print(f"   • Declared vs Installed: {dimensions['declared_vs_installed']}/10")
-                print(f"   • Known CVEs: {dimensions['known_cves']}/10") 
-                print(f"   • CWE Coverage: {dimensions['cwe_coverage']}/10")
-                print(f"   • Package Abandonment: {dimensions['package_abandonment']}/10")
-                print(f"   • Typosquat Heuristics: {dimensions['typosquat_heuristics']}/10")
-                print()
-        
+
+                # Add row
+                table.add_row(
+                    f"{risk_emoji} {package}",
+                    f"{final_score:.1f}",
+                    risk_level.upper(),
+                    f"{type_indicator} {dependency_type.upper()}",
+                    f"{dimensions['declared_vs_installed']:.1f}",
+                    f"{dimensions['known_cves']:.1f}",
+                    f"{dimensions['cwe_coverage']:.1f}",
+                    f"{dimensions['package_abandonment']:.1f}",
+                    f"{dimensions['typosquat_heuristics']:.1f}"
+                )
+
+            self.console.print(table)
+
         # Calculate summary statistics
         high_risk = [s for s in scores if s['risk_level'] == 'high']
         medium_risk = [s for s in scores if s['risk_level'] == 'medium']
@@ -391,11 +416,11 @@ class ScannerService:
         classification = self._get_classification(dependencies_analysis)
         total_packages, direct_count, transitive_count = self._count_dependencies(classification)
 
-        print("📈 Risk Assessment Summary:")
-        print(f"   🔴 High Risk: {len(high_risk)} packages")
-        print(f"   🟡 Medium Risk: {len(medium_risk)} packages") 
-        print(f"   🟢 Low Risk: {len(low_risk)} packages")
-        print(f"   📦 Direct Dependencies: {direct_count} packages")
-        print(f"   ⬇️ Transitive Dependencies: {transitive_count} packages")
-        print(f"   📊 Total Analyzed: {len(scores)} packages")
-        print()
+        self.console.print("\n📈 Risk Assessment Summary:", style="bold blue")
+        self.console.print(f"   🔴 High Risk: {len(high_risk)} packages")
+        self.console.print(f"   🟡 Medium Risk: {len(medium_risk)} packages")
+        self.console.print(f"   🟢 Low Risk: {len(low_risk)} packages")
+        self.console.print(f"   📦 Direct Dependencies: {direct_count} packages")
+        self.console.print(f"   ⬇️ Transitive Dependencies: {transitive_count} packages")
+        self.console.print(f"   📊 Total Analyzed: {len(scores)} packages")
+        self.console.print()
