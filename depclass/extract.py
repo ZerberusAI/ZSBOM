@@ -156,8 +156,8 @@ def _merge_ecosystem_results(
 
     if not all_ecosystems:
         print("ℹ️  No supported package ecosystems detected in this repository")
-        print("📦 ZSBOM currently supports: Python, JavaScript/npm")
-        print("💡 Support for additional ecosystems (Go, Rust, Java, etc.) is coming soon")
+        print("📦 ZSBOM currently supports: Python, JavaScript/npm, Java (Maven/Gradle)")
+        print("💡 Support for additional ecosystems (Go, Rust, Ruby, etc.) is coming soon")
 
         # Return structured result indicating unsupported repository
         return {
@@ -170,7 +170,7 @@ def _merge_ecosystem_results(
                 "resolution_details": {},
                 "package_specs": {},
                 "unsupported_repo": True,  # Flag for unsupported ecosystem
-                "supported_ecosystems": ["python", "npm"],  # List of supported ecosystems
+                "supported_ecosystems": ["python", "npm", "maven"],  # List of supported ecosystems
                 "status_message": "No supported ecosystems detected"
             }
         }

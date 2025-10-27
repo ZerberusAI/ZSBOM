@@ -26,21 +26,21 @@ class ScalibrExtractor(BaseExtractor):
         """
         Check if this extractor can extract from the project.
 
-        For ScalibrExtractor, we check if JavaScript/NPM environment is detected and
-        if appropriate lock files exist for transitive dependency analysis.
+        Returns True if JavaScript (with lock files) or Java project is detected.
         """
         console = Console()
 
         try:
-            # First, check if this is a JavaScript/NPM project
+            # Check for Java project - no lock file required
+            if self._is_java_project():
+                return True
+
+            # Check for JavaScript/NPM project - lock files required
             if not self._is_javascript_project():
                 return False
 
-            # Check if JavaScript lock files exist for transitive analysis
-            lock_files_exist = self._check_javascript_lock_files()
-
-            if not lock_files_exist:
-                # JavaScript project detected but no lock files - show warning
+            # JavaScript found - verify lock files exist
+            if not self._check_javascript_lock_files():
                 console.print("⚠️  JavaScript/NPM project detected but no lock files found.", style="yellow")
                 console.print("   For transitive dependency analysis, please ensure one of these files exists:", style="dim")
                 console.print("   • package-lock.json (npm)", style="dim")
@@ -53,7 +53,7 @@ class ScalibrExtractor(BaseExtractor):
             return True
 
         except Exception as e:
-            console.print(f"⚠️ Error checking JavaScript environment: {e}", style="red")
+            console.print(f"⚠️ Error checking ecosystem support: {e}", style="red")
             return False
 
     def extract_dependencies(
@@ -65,13 +65,27 @@ class ScalibrExtractor(BaseExtractor):
         config = self.validate_config(config)
 
         try:
-            # Use Scalibr to scan with JavaScript/NPM plugin only
-            # No enrichers - they don't provide useful data for our use case
-            scalibr = ScalibrWrapper()
-            plugins = ["javascript"]
+            # Determine which plugins to use based on detected ecosystems
+            plugins = []
+            if self._is_javascript_project():
+                plugins.append("javascript")
+            if self._is_java_project():
+                # Use online Java plugin to resolve transitive dependencies
+                plugins.extend([
+                    "java/pomxmlnet",                        # Maven pom.xml (online - resolves transitive deps)
+                    "java/gradlelockfile",                   # Gradle lock file
+                    "java/gradleverificationmetadataxml"     # Gradle verification
+                ])
 
-            # Run Scalibr scan
-            scalibr_result = scalibr.scan(str(self.project_path), plugins=plugins)
+            if not plugins:
+                return self._create_empty_result()
+
+            # Use Scalibr to scan with detected plugins
+            scalibr = ScalibrWrapper()
+
+            # Run Scalibr scan in online mode to resolve transitive dependencies for Java
+            # JavaScript works fine in online mode too (lock files contain all needed data)
+            scalibr_result = scalibr.scan(str(self.project_path), plugins=plugins, mode="online")
 
             if not scalibr_result:
                 return self._create_empty_result()
@@ -337,6 +351,22 @@ class ScalibrExtractor(BaseExtractor):
         project_path = Path(self.project_path)
         for js_file in js_files:
             if (project_path / js_file).exists():
+                return True
+
+        return False
+
+    def _is_java_project(self) -> bool:
+        """Check if the current project is a Java project (Maven or Gradle)."""
+        java_files = [
+            "pom.xml",              # Maven
+            "build.gradle",         # Gradle (Groovy)
+            "build.gradle.kts",     # Gradle (Kotlin)
+            "gradle.lockfile"       # Gradle lock file
+        ]
+
+        project_path = Path(self.project_path)
+        for java_file in java_files:
+            if (project_path / java_file).exists():
                 return True
 
         return False
