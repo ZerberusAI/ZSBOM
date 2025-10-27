@@ -26,7 +26,17 @@ def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str
         Primary declared version string or None if not found
     """
     # File priority for direct dependencies
-    file_priority = ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"]
+    # Includes both Python and JavaScript/npm ecosystem files
+    file_priority = [
+        # JavaScript/npm files
+        "package.json",
+        # Python files
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.py",
+        "setup.cfg",
+        "Pipfile"
+    ]
 
     # Check direct dependency files first (highest priority)
     for file_name in file_priority:
