@@ -16,7 +16,7 @@ class PRCommentGenerator:
     """Generates rich GitHub-flavored markdown PR comments with vulnerability data."""
 
     # GitHub raw URL for Zerberus logo (works on both light/dark themes)
-    LOGO_URL = "https://raw.githubusercontent.com/ZerberusAI/ZSBOM/main/assets/ZEB_v1.png"
+    LOGO_URL = "https://raw.githubusercontent.com/ZerberusAI/ZSBOM/master/assets/ZEB_v1.png"
     LOGO_WIDTH = 300
 
     # Ecosystem emojis
@@ -417,34 +417,28 @@ class PRCommentGenerator:
         for pkg in self.risk_report:
             risk_level = pkg.get("risk_level", "").lower()
             if risk_level in ["high", "medium"]:
-                # Add vulnerability counts
+                # Add vulnerability counts from dimension_details
                 pkg_with_vulns = pkg.copy()
-                pkg_with_vulns["vulnerability_counts"] = self._get_package_vulnerability_counts(pkg.get("package", ""))
+
+                # Extract vulnerability counts from dimension_details.known_cves
+                dimension_details = pkg.get("dimension_details", {})
+                known_cves = dimension_details.get("known_cves", {})
+                cves_list = known_cves.get("cves", [])
+
+                # Count vulnerabilities by severity from existing CVE data
+                vuln_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+                for cve in cves_list:
+                    severity = cve.get("severity", "").lower()
+                    if severity in vuln_counts:
+                        vuln_counts[severity] += 1
+
+                pkg_with_vulns["vulnerability_counts"] = vuln_counts
                 high_risk.append(pkg_with_vulns)
 
         # Sort by risk score (lower is riskier in ZSBOM)
         high_risk.sort(key=lambda x: x.get("final_score", 100))
 
         return high_risk[:limit]
-
-    def _get_package_vulnerability_counts(self, package_name: str) -> Dict[str, int]:
-        """Get vulnerability counts for a specific package."""
-        counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-
-        if not self.validation_report:
-            return counts
-
-        for ecosystem, data in self.validation_report.get("ecosystems", {}).items():
-            for vuln in data.get("cve_issues", []):
-                # Check if vulnerability affects this package
-                affected_versions = vuln.get("affected_versions", [])
-                # This is a simplified check - you may need to match against actual installed version
-                if package_name.lower() in [pkg.lower() for pkg in affected_versions[:5]]:  # Check first 5 versions
-                    severity = vuln.get("severity", "unknown").lower()
-                    if severity in counts:
-                        counts[severity] += 1
-
-        return counts
 
     def _get_all_vulnerabilities(self) -> List[Dict]:
         """Get all vulnerabilities from validation report."""
