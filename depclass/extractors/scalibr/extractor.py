@@ -151,7 +151,8 @@ class ScalibrExtractor(BaseExtractor):
                             "total_packages": 0,
                             "dependency_tree": {},
                             "package_files": [],
-                            "resolution_details": {}
+                            "resolution_details": {},
+                            "package_specs": {}
                         }
                     }
 
@@ -179,6 +180,7 @@ class ScalibrExtractor(BaseExtractor):
 
             # Use classifier to build enhanced dependency tree if available
             classifier_info = ecosystem_classifiers.get(ecosystem_name)
+            classifier = None
             if classifier_info:
                 classifier, _ = classifier_info
                 enhanced_tree = classifier.build_dependency_tree(
@@ -186,6 +188,16 @@ class ScalibrExtractor(BaseExtractor):
                     ecosystem_data["dependencies_analysis"]["resolution_details"]
                 )
                 ecosystem_data["dependencies_analysis"]["dependency_tree"] = enhanced_tree
+
+            # Build package_specs for declared vs installed analysis
+            package_specs = self._build_package_specs(
+                ecosystem_name,
+                dependencies,
+                ecosystem_data["dependencies_analysis"]["dependency_tree"],
+                ecosystem_data["dependencies_analysis"]["resolution_details"],
+                classifier
+            )
+            ecosystem_data["dependencies_analysis"]["package_specs"] = package_specs
 
             self._finalize_ecosystem_data(ecosystem_data, ecosystem_name)
 
@@ -295,6 +307,116 @@ class ScalibrExtractor(BaseExtractor):
 
         return dependencies
 
+    def _build_package_specs(
+        self,
+        ecosystem_name: str,
+        dependencies: Dict[str, Dict[str, str]],
+        dependency_tree: Dict[str, Any],
+        resolution_details: Dict[str, str],
+        classifier
+    ) -> Dict[str, Dict[str, str]]:
+        """Build package_specs dictionary for declared vs installed scoring.
+
+        Args:
+            ecosystem_name: Name of the ecosystem (e.g., "npm")
+            dependencies: Dict mapping file names to package specifications
+            dependency_tree: Dict containing dependency tree structure
+            resolution_details: Dict mapping packages to their resolved versions
+            classifier: Ecosystem-specific classifier instance
+
+        Returns:
+            Dict with format {file_name: {package_name: version_spec}} for direct deps
+            and {transitive_from_parent: {package_name: version_spec}} for transitive deps
+        """
+        package_specs = {}
+
+        # For JavaScript/npm, extract declared versions from package.json
+        if ecosystem_name == "npm" and classifier:
+            dependency_specs = classifier.get_direct_dependency_specs(Path(self.project_path))
+            if dependency_specs:
+                package_specs["package.json"] = dependency_specs
+
+        # For other ecosystems, use the dependencies dict as-is
+        # (can be extended for other ecosystems in the future)
+        else:
+            for file_name, packages in dependencies.items():
+                if packages:
+                    package_specs[file_name] = packages.copy()
+
+        # Add transitive dependencies with their parent's declared versions
+        self._add_transitive_package_specs(
+            package_specs, dependency_tree, resolution_details
+        )
+
+        return package_specs
+
+    def _add_transitive_package_specs(
+        self,
+        package_specs: Dict[str, Dict[str, str]],
+        dependency_tree: Dict[str, Any],
+        resolution_details: Dict[str, str]
+    ) -> None:
+        """Add transitive dependencies to package_specs with their parent's declared versions.
+
+        This follows the same pattern as the Python extractor to ensure consistency
+        in the declared vs installed scoring. Recursively traverses the entire dependency
+        tree to capture all transitive relationships at all depth levels.
+
+        Args:
+            package_specs: Dictionary to modify (adds transitive specs)
+            dependency_tree: Dict containing dependency tree structure with children
+            resolution_details: Dict mapping packages to their resolved versions
+        """
+        # Build a reverse mapping: package -> list of parents by recursively traversing tree
+        reverse_tree = {}
+
+        def traverse_children(parent_name: str, children: Dict[str, Any]) -> None:
+            """Recursively traverse children to build reverse tree."""
+            for child_key, child_info in children.items():
+                # Extract package name from "package==version" format
+                child_name = child_key.split("==")[0] if "==" in child_key else child_key
+
+                # Add parent-child relationship
+                if child_name not in reverse_tree:
+                    reverse_tree[child_name] = []
+                reverse_tree[child_name].append(parent_name)
+
+                # Recursively process this child's children
+                grandchildren = child_info.get("children", {})
+                if grandchildren:
+                    traverse_children(child_name, grandchildren)
+
+        # Start traversal from direct dependencies only
+        for package_key, package_info in dependency_tree.items():
+            # Extract package name from "package==version" format
+            package_name = package_key.split("==")[0] if "==" in package_key else package_key
+
+            # Only start traversal from direct dependencies
+            if package_info.get("type") == "direct":
+                children = package_info.get("children", {})
+                if children:
+                    traverse_children(package_name, children)
+
+        # Now add transitive specs
+        for package, parents in reverse_tree.items():
+            if not parents:  # Skip packages with no parents (shouldn't happen here)
+                continue
+
+            for parent in parents:
+                parent_lower = parent.lower()
+                package_lower = package.lower()
+
+                # Get the resolved version for this package
+                package_resolved_version = resolution_details.get(package_lower, "")
+
+                if package_resolved_version:
+                    # Create a "transitive from parent" file entry
+                    transitive_file = f"transitive_from_{parent_lower}"
+                    if transitive_file not in package_specs:
+                        package_specs[transitive_file] = {}
+
+                    # Store the declared version (pinned to what parent resolves to)
+                    package_specs[transitive_file][package_lower] = f"=={package_resolved_version}"
 
     def _finalize_ecosystem_data(self, ecosystem_data: Dict[str, Any], ecosystem_name: str) -> None:
         """Finalize ecosystem data by building package_files structure."""

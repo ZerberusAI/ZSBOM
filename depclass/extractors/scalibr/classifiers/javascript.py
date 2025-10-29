@@ -69,6 +69,52 @@ class JavaScriptDependencyClassifier(BaseDependencyClassifier):
             console.print(f"⚠️ Error reading package.json: {e}", style="yellow")
             return set()
 
+    def get_direct_dependency_specs(self, project_path: Path) -> Dict[str, str]:
+        """
+        Get direct dependency specifications from package.json.
+
+        This method extracts both package names and their declared version
+        specifications (e.g., "^18.0.0", "~1.2.3", "1.0.0") from package.json.
+
+        Args:
+            project_path: Path to the project directory
+
+        Returns:
+            Dictionary mapping package names to version specs
+            Example: {"react": "^18.0.0", "next": "15.0.3"}
+        """
+        console = Console()
+        package_json_path = project_path / "package.json"
+
+        if not package_json_path.exists():
+            return {}
+
+        try:
+            with open(package_json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            dependency_specs = {}
+
+            # Include all dependency types from package.json
+            dependency_types = [
+                "dependencies",
+                "devDependencies",
+                "peerDependencies",
+                "optionalDependencies"
+            ]
+
+            for dep_type in dependency_types:
+                if dep_type in data and isinstance(data[dep_type], dict):
+                    for package_name, version_spec in data[dep_type].items():
+                        # Store the version spec as-is from package.json
+                        dependency_specs[package_name] = version_spec
+
+            return dependency_specs
+
+        except (json.JSONDecodeError, IOError) as e:
+            console.print(f"⚠️ Error reading package.json: {e}", style="yellow")
+            return {}
+
     def parse_lock_file(self, project_path: Path) -> Dict[str, Any]:
         """
         Parse package-lock.json for all package data.
