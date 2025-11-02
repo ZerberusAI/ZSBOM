@@ -26,10 +26,14 @@ def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str
         Primary declared version string or None if not found
     """
     # File priority for direct dependencies
-    # Includes both Python and JavaScript/npm ecosystem files
+    # Includes Python, JavaScript/npm, and Java/Maven ecosystem files
     file_priority = [
         # JavaScript/npm files
         "package.json",
+        # Java/Maven files
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
         # Python files
         "pyproject.toml",
         "requirements.txt",
