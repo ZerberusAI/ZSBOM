@@ -336,6 +336,19 @@ class ScalibrExtractor(BaseExtractor):
             if dependency_specs:
                 package_specs["package.json"] = dependency_specs
 
+        # For Java/Maven, extract declared versions from pom.xml or build.gradle
+        elif ecosystem_name == "maven" and classifier:
+            dependency_specs = classifier.get_direct_dependency_specs(Path(self.project_path))
+            if dependency_specs:
+                # Determine which manifest file exists and use appropriate key
+                project_path = Path(self.project_path)
+                if (project_path / "pom.xml").exists():
+                    package_specs["pom.xml"] = dependency_specs
+                elif (project_path / "build.gradle").exists():
+                    package_specs["build.gradle"] = dependency_specs
+                elif (project_path / "build.gradle.kts").exists():
+                    package_specs["build.gradle.kts"] = dependency_specs
+
         # For other ecosystems, use the dependencies dict as-is
         # (can be extended for other ecosystems in the future)
         else:
