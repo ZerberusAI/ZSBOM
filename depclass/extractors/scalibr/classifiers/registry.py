@@ -9,15 +9,16 @@ from typing import Optional
 
 from .base import BaseDependencyClassifier
 from .javascript import JavaScriptDependencyClassifier
+from .java import JavaDependencyClassifier
 
 
 # Registry mapping ecosystem names to classifier classes
-# Only JavaScript for now, easy to extend for Java, Go, etc.
-# Note: Ecosystem key remains 'npm' for PURL compatibility
+# Supports JavaScript (npm) and Java (maven/gradle)
+# Note: Ecosystem keys use registry names for PURL compatibility
 DEPENDENCY_CLASSIFIERS = {
     "npm": JavaScriptDependencyClassifier,
+    "maven": JavaDependencyClassifier,  # Handles both Maven and Gradle
     # Future ecosystems:
-    # "java": JavaDependencyClassifier,
     # "go": GoDependencyClassifier,
     # "python": PythonDependencyClassifier,  # If needed in future
 }
