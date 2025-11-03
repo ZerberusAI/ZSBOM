@@ -34,6 +34,14 @@ def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str
         if version:
             return version
 
+    # Check subdirectory manifest files (e.g., "backend/package.json", "module-a/pom.xml")
+    # This handles multi-module projects where manifests are in subdirectories
+    for file_name, packages in package_specs.items():
+        if "/" in file_name and not file_name.startswith("transitive_from_"):
+            version = packages.get(package)
+            if version:
+                return version
+
     # Check transitive dependency declarations from parent packages
     for file_name, packages in package_specs.items():
         if file_name.startswith("transitive_from_"):
@@ -117,6 +125,10 @@ def score_packages(
 
         # Get primary declared version (None for transitive dependencies)
         primary_declared_ver = get_primary_declared_version(pkg, package_specs)
+
+        # Fallback: For transitive deps without declared version, use installed version
+        if primary_declared_ver is None and installed_version:
+            primary_declared_ver = installed_version
 
         # Get CVEs
         cves = _package_cve_issues(pkg, cve_data)
