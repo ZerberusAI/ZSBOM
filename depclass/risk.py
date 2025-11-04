@@ -140,10 +140,6 @@ def score_packages(
         # Get primary declared version (None for transitive dependencies)
         primary_declared_ver = get_primary_declared_version(pkg, package_specs)
 
-        # Fallback: For transitive deps without declared version, use installed version
-        if primary_declared_ver is None and installed_version:
-            primary_declared_ver = installed_version
-
         # Get CVEs
         cves = _package_cve_issues(pkg, cve_data)
 

@@ -307,6 +307,73 @@ class ScalibrExtractor(BaseExtractor):
 
         return dependencies
 
+    def _get_default_exclusions(self) -> set:
+        """
+        Get standard directories to exclude during manifest file discovery.
+
+        Returns:
+            Set of directory names to skip during recursive file search.
+        """
+        return {
+            'node_modules', 'vendor', '.git', '__pycache__',
+            'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'
+        }
+
+    def _discover_manifest_files(
+        self,
+        patterns: List[str],
+        exclude_dirs: Optional[set] = None
+    ) -> Dict[str, Path]:
+        """
+        Discover manifest files recursively with exclusion filtering.
+
+        Args:
+            patterns: List of file patterns to search for (e.g., ["package.json"])
+            exclude_dirs: Optional set of directories to exclude (uses defaults if None)
+
+        Returns:
+            Dict mapping relative file paths (as strings) to absolute Path objects
+        """
+        if exclude_dirs is None:
+            exclude_dirs = self._get_default_exclusions()
+
+        discovered = {}
+        project_path = Path(self.project_path)
+
+        for pattern in patterns:
+            for file_path in project_path.rglob(pattern):
+                # Skip excluded directories
+                if any(excluded in file_path.parts for excluded in exclude_dirs):
+                    continue
+
+                # Get relative path for the key
+                try:
+                    relative_path = file_path.relative_to(project_path)
+                    file_key = str(relative_path)
+                except ValueError:
+                    file_key = file_path.name
+
+                discovered[file_key] = file_path
+
+        return discovered
+
+    def _get_manifest_patterns(self, ecosystem_name: str) -> List[str]:
+        """
+        Get manifest file patterns for a given ecosystem.
+
+        Args:
+            ecosystem_name: Name of the ecosystem (e.g., "npm", "maven")
+
+        Returns:
+            List of file patterns to search for this ecosystem
+        """
+        ecosystem_patterns = {
+            "npm": ["package.json"],
+            "maven": ["pom.xml", "build.gradle", "build.gradle.kts"]
+        }
+
+        return ecosystem_patterns.get(ecosystem_name, [])
+
     def _build_package_specs(
         self,
         ecosystem_name: str,
@@ -330,57 +397,27 @@ class ScalibrExtractor(BaseExtractor):
         """
         package_specs = {}
 
-        # For JavaScript/npm, extract declared versions from ALL package.json files recursively
-        if ecosystem_name == "npm" and classifier:
-            project_path = Path(self.project_path)
-            exclude_dirs = {'node_modules', 'vendor', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'}
+        # Extract declared versions from manifest files using classifier
+        if classifier:
+            # Get manifest patterns for this ecosystem
+            patterns = self._get_manifest_patterns(ecosystem_name)
 
-            # Find all package.json files recursively
-            for package_json_path in project_path.rglob("package.json"):
-                # Skip excluded directories
-                if any(excluded in package_json_path.parts for excluded in exclude_dirs):
-                    continue
+            if patterns:
+                # Discover all manifest files recursively
+                manifests = self._discover_manifest_files(patterns)
 
-                # Get relative path for the key
-                try:
-                    relative_path = package_json_path.relative_to(project_path)
-                    file_key = str(relative_path)
-                except ValueError:
-                    file_key = package_json_path.name
-
-                # Get dependency specs for this package.json
-                dependency_specs = classifier.get_direct_dependency_specs(package_json_path.parent)
-                if dependency_specs:
-                    package_specs[file_key] = dependency_specs
-
-        # For Java/Maven, extract declared versions from ALL pom.xml/build.gradle files recursively
-        elif ecosystem_name == "maven" and classifier:
-            project_path = Path(self.project_path)
-            exclude_dirs = {'node_modules', 'vendor', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'}
-
-            # Find all Maven/Gradle manifest files recursively
-            manifest_patterns = ["pom.xml", "build.gradle", "build.gradle.kts"]
-            for pattern in manifest_patterns:
-                for manifest_path in project_path.rglob(pattern):
-                    # Skip excluded directories
-                    if any(excluded in manifest_path.parts for excluded in exclude_dirs):
-                        continue
-
-                    # Get relative path for the key
-                    try:
-                        relative_path = manifest_path.relative_to(project_path)
-                        file_key = str(relative_path)
-                    except ValueError:
-                        file_key = manifest_path.name
-
-                    # Get dependency specs for this manifest file
+                # Extract dependency specs from each manifest
+                for file_key, manifest_path in manifests.items():
                     dependency_specs = classifier.get_direct_dependency_specs(manifest_path.parent)
                     if dependency_specs:
                         package_specs[file_key] = dependency_specs
-
-        # For other ecosystems, use the dependencies dict as-is
-        # (can be extended for other ecosystems in the future)
+            else:
+                # Ecosystem not in patterns map - use dependencies dict as-is
+                for file_name, packages in dependencies.items():
+                    if packages:
+                        package_specs[file_name] = packages.copy()
         else:
+            # No classifier available - use dependencies dict as-is
             for file_name, packages in dependencies.items():
                 if packages:
                     package_specs[file_name] = packages.copy()
