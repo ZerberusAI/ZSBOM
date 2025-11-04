@@ -1,6 +1,6 @@
 [project]
 name = "zsbom"
-version = "0.11.0"
+version = "0.11.1"
 description = "Zerberus SBOM Automation Framework"
 authors = [{ name = "Zerberus", email = "opensource@zerberus.ai" }]
 license = { text = "MIT" }

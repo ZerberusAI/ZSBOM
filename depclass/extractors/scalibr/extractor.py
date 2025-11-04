@@ -307,6 +307,73 @@ class ScalibrExtractor(BaseExtractor):
 
         return dependencies
 
+    def _get_default_exclusions(self) -> set:
+        """
+        Get standard directories to exclude during manifest file discovery.
+
+        Returns:
+            Set of directory names to skip during recursive file search.
+        """
+        return {
+            'node_modules', 'vendor', '.git', '__pycache__',
+            'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'
+        }
+
+    def _discover_manifest_files(
+        self,
+        patterns: List[str],
+        exclude_dirs: Optional[set] = None
+    ) -> Dict[str, Path]:
+        """
+        Discover manifest files recursively with exclusion filtering.
+
+        Args:
+            patterns: List of file patterns to search for (e.g., ["package.json"])
+            exclude_dirs: Optional set of directories to exclude (uses defaults if None)
+
+        Returns:
+            Dict mapping relative file paths (as strings) to absolute Path objects
+        """
+        if exclude_dirs is None:
+            exclude_dirs = self._get_default_exclusions()
+
+        discovered = {}
+        project_path = Path(self.project_path)
+
+        for pattern in patterns:
+            for file_path in project_path.rglob(pattern):
+                # Skip excluded directories
+                if any(excluded in file_path.parts for excluded in exclude_dirs):
+                    continue
+
+                # Get relative path for the key
+                try:
+                    relative_path = file_path.relative_to(project_path)
+                    file_key = str(relative_path)
+                except ValueError:
+                    file_key = file_path.name
+
+                discovered[file_key] = file_path
+
+        return discovered
+
+    def _get_manifest_patterns(self, ecosystem_name: str) -> List[str]:
+        """
+        Get manifest file patterns for a given ecosystem.
+
+        Args:
+            ecosystem_name: Name of the ecosystem (e.g., "npm", "maven")
+
+        Returns:
+            List of file patterns to search for this ecosystem
+        """
+        ecosystem_patterns = {
+            "npm": ["package.json"],
+            "maven": ["pom.xml", "build.gradle", "build.gradle.kts"]
+        }
+
+        return ecosystem_patterns.get(ecosystem_name, [])
+
     def _build_package_specs(
         self,
         ecosystem_name: str,
@@ -330,28 +397,27 @@ class ScalibrExtractor(BaseExtractor):
         """
         package_specs = {}
 
-        # For JavaScript/npm, extract declared versions from package.json
-        if ecosystem_name == "npm" and classifier:
-            dependency_specs = classifier.get_direct_dependency_specs(Path(self.project_path))
-            if dependency_specs:
-                package_specs["package.json"] = dependency_specs
+        # Extract declared versions from manifest files using classifier
+        if classifier:
+            # Get manifest patterns for this ecosystem
+            patterns = self._get_manifest_patterns(ecosystem_name)
 
-        # For Java/Maven, extract declared versions from pom.xml or build.gradle
-        elif ecosystem_name == "maven" and classifier:
-            dependency_specs = classifier.get_direct_dependency_specs(Path(self.project_path))
-            if dependency_specs:
-                # Determine which manifest file exists and use appropriate key
-                project_path = Path(self.project_path)
-                if (project_path / "pom.xml").exists():
-                    package_specs["pom.xml"] = dependency_specs
-                elif (project_path / "build.gradle").exists():
-                    package_specs["build.gradle"] = dependency_specs
-                elif (project_path / "build.gradle.kts").exists():
-                    package_specs["build.gradle.kts"] = dependency_specs
+            if patterns:
+                # Discover all manifest files recursively
+                manifests = self._discover_manifest_files(patterns)
 
-        # For other ecosystems, use the dependencies dict as-is
-        # (can be extended for other ecosystems in the future)
+                # Extract dependency specs from each manifest
+                for file_key, manifest_path in manifests.items():
+                    dependency_specs = classifier.get_direct_dependency_specs(manifest_path.parent)
+                    if dependency_specs:
+                        package_specs[file_key] = dependency_specs
+            else:
+                # Ecosystem not in patterns map - use dependencies dict as-is
+                for file_name, packages in dependencies.items():
+                    if packages:
+                        package_specs[file_name] = packages.copy()
         else:
+            # No classifier available - use dependencies dict as-is
             for file_name, packages in dependencies.items():
                 if packages:
                     package_specs[file_name] = packages.copy()
@@ -474,7 +540,7 @@ class ScalibrExtractor(BaseExtractor):
         return base_config
 
     def _is_javascript_project(self) -> bool:
-        """Check if the current project is a JavaScript/NPM project."""
+        """Check if the current project is a JavaScript/NPM project (recursively)."""
         js_files = [
             "package.json",
             "package-lock.json",
@@ -484,14 +550,19 @@ class ScalibrExtractor(BaseExtractor):
         ]
 
         project_path = Path(self.project_path)
+        exclude_dirs = {'node_modules', 'vendor', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'}
+
+        # Check recursively for any JS files
         for js_file in js_files:
-            if (project_path / js_file).exists():
-                return True
+            for file_path in project_path.rglob(js_file):
+                # Skip excluded directories
+                if not any(excluded in file_path.parts for excluded in exclude_dirs):
+                    return True
 
         return False
 
     def _is_java_project(self) -> bool:
-        """Check if the current project is a Java project (Maven or Gradle)."""
+        """Check if the current project is a Java project (Maven or Gradle) recursively."""
         java_files = [
             "pom.xml",              # Maven
             "build.gradle",         # Gradle (Groovy)
@@ -500,15 +571,20 @@ class ScalibrExtractor(BaseExtractor):
         ]
 
         project_path = Path(self.project_path)
+        exclude_dirs = {'node_modules', 'vendor', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'}
+
+        # Check recursively for any Java files
         for java_file in java_files:
-            if (project_path / java_file).exists():
-                return True
+            for file_path in project_path.rglob(java_file):
+                # Skip excluded directories
+                if not any(excluded in file_path.parts for excluded in exclude_dirs):
+                    return True
 
         return False
 
     def _check_javascript_lock_files(self) -> bool:
         """
-        Check if any of the supported JavaScript lock files exist.
+        Check if any of the supported JavaScript lock files exist recursively.
 
         Returns True if at least one lock file is found, False otherwise.
         """
@@ -521,8 +597,13 @@ class ScalibrExtractor(BaseExtractor):
         ]
 
         project_path = Path(self.project_path)
+        exclude_dirs = {'node_modules', 'vendor', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'}
+
+        # Check recursively for any lock files
         for lock_file in lock_files:
-            if (project_path / lock_file).exists():
-                return True
+            for file_path in project_path.rglob(lock_file):
+                # Skip excluded directories
+                if not any(excluded in file_path.parts for excluded in exclude_dirs):
+                    return True
 
         return False

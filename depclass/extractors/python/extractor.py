@@ -65,6 +65,35 @@ class PythonExtractor(BaseExtractor):
             "*requirements.txt"
         ]
 
+    def get_dependency_files(self) -> List[Path]:
+        """
+        Get list of dependency files found in the project recursively.
+
+        Overrides base implementation to search subdirectories.
+
+        Returns:
+            List of Path objects for found dependency files
+        """
+        found_files = []
+        exclude_dirs = {'node_modules', 'vendor', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.pytest_cache', 'target'}
+
+        # Recursive search for all dependency files
+        for pattern in self.supported_files:
+            if "*" in pattern:
+                # Use rglob for recursive glob patterns
+                for file_path in self.project_path.rglob(pattern):
+                    # Skip excluded directories
+                    if not any(excluded in file_path.parts for excluded in exclude_dirs):
+                        found_files.append(file_path)
+            else:
+                # Search recursively for exact filenames
+                for file_path in self.project_path.rglob(pattern):
+                    # Skip excluded directories
+                    if not any(excluded in file_path.parts for excluded in exclude_dirs):
+                        found_files.append(file_path)
+
+        return found_files
+
     def can_extract(self) -> bool:
         """Check if this project contains Python dependency files."""
         return len(self.get_dependency_files()) > 0
@@ -139,19 +168,32 @@ class PythonExtractor(BaseExtractor):
         }
 
     def _extract_dependencies_from_files(self) -> Dict[str, Dict[str, str]]:
-        """Extract dependencies from all found dependency files."""
+        """Extract dependencies from all found dependency files recursively."""
         dependencies = {}
 
-        # Parse each dependency file format
-        for file_name in self.file_priority:
-            file_path = self.project_path / file_name
-            if file_path.exists():
+        # Get all dependency files recursively
+        all_files = self.get_dependency_files()
+
+        # Sort files to maintain consistent processing order
+        # Prioritize root-level files, then sort by path
+        sorted_files = sorted(all_files, key=lambda p: (len(p.parts), str(p)))
+
+        # Parse each dependency file
+        for file_path in sorted_files:
+            try:
+                # Get relative path from project root for tracking
                 try:
-                    deps = self._parse_file(file_path)
-                    if deps:
-                        dependencies[file_name] = deps
-                except Exception as e:
-                    print(f"⚠️ Error parsing {file_name}: {e}")
+                    relative_path = file_path.relative_to(self.project_path)
+                    file_key = str(relative_path)
+                except ValueError:
+                    # If file is not relative to project_path, use name
+                    file_key = file_path.name
+
+                deps = self._parse_file(file_path)
+                if deps:
+                    dependencies[file_key] = deps
+            except Exception as e:
+                print(f"⚠️ Error parsing {file_path}: {e}")
 
         return dependencies
 

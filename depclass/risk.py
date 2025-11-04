@@ -48,6 +48,14 @@ def get_primary_declared_version(package: str, package_specs: Dict[str, Dict[str
         if version:
             return version
 
+    # Check subdirectory manifest files (e.g., "backend/package.json", "module-a/pom.xml")
+    # This handles multi-module projects where manifests are in subdirectories
+    for file_name, packages in package_specs.items():
+        if "/" in file_name and not file_name.startswith("transitive_from_"):
+            version = packages.get(package)
+            if version:
+                return version
+
     # Check transitive dependency declarations from parent packages
     for file_name, packages in package_specs.items():
         if file_name.startswith("transitive_from_"):

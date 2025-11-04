@@ -143,11 +143,16 @@ func Scan(root *C.char, pluginsJSON *C.char, mode *C.char) *C.char {
         plugins = pl.FromCapabilities(capabilities)
     }
 
-    // Create scan configuration
+    // Create scan configuration with explicit recursive scanning settings
     scanConfig := &scalibr.ScanConfig{
         ScanRoots:    fs.RealFSScanRoots(rootPath),
         Capabilities: capabilities,
         Plugins:      plugins,
+
+        // Enable recursive scanning with performance optimizations
+        DirsToSkip:   []string{"node_modules", "vendor", ".git", "__pycache__", "venv", ".venv", "dist", "build", ".pytest_cache", "target"},
+        UseGitignore: true,
+        MaxInodes:    1000000,  // Prevent excessive scanning
     }
 
     // Run scan
