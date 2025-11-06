@@ -136,6 +136,21 @@ class DepsDevProvider(CacheableMixin):
 
             return graph_data
 
+        except requests.exceptions.Timeout:
+            self.logger.warning(
+                f"Timeout while fetching dependency graph for {package}@{version}"
+            )
+            self.stats["errors"] += 1
+            return {}
+
+        except requests.exceptions.ConnectionError:
+            self.logger.warning(
+                f"Network or access issue while fetching dependency graph for "
+                f"{package}@{version}. This may be restricted in your environment."
+            )
+            self.stats["errors"] += 1
+            return {}
+
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 self.logger.debug(
@@ -146,6 +161,13 @@ class DepsDevProvider(CacheableMixin):
                 self.logger.error(
                     f"Failed to fetch dependency graph for {package}@{version}: {e}"
                 )
+            self.stats["errors"] += 1
+            return {}
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(
+                f"Request failed for dependency graph {package}@{version}: {e}"
+            )
             self.stats["errors"] += 1
             return {}
 
