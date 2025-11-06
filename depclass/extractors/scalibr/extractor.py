@@ -5,7 +5,6 @@ Uses OSV Scalibr to detect and extract dependencies from all supported
 package ecosystems except Python (which uses dedicated pip-tools logic).
 """
 
-import json
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from rich.console import Console
 from ..base import BaseExtractor
 from .wrapper import ScalibrWrapper
 from .classifiers import get_classifier
+from ...enhancers.deps_dev_provider import DepsDevProvider
 
 
 class ScalibrExtractor(BaseExtractor):
@@ -91,7 +91,7 @@ class ScalibrExtractor(BaseExtractor):
                 return self._create_empty_result()
 
             # Convert Scalibr results to ecosystem-separated format
-            return self._parse_scalibr_results(scalibr_result, config)
+            return self._parse_scalibr_results(scalibr_result, config, cache)
 
         except Exception as e:
             print(f"⚠️ Scalibr extraction failed: {e}")
@@ -124,7 +124,7 @@ class ScalibrExtractor(BaseExtractor):
             "total_packages": 0
         }
 
-    def _parse_scalibr_results(self, scalibr_result: Dict[str, Any], config: Dict) -> Dict[str, Any]:
+    def _parse_scalibr_results(self, scalibr_result: Dict[str, Any], config: Dict, cache=None) -> Dict[str, Any]:
         """Parse Scalibr output and organize by ecosystem."""
         inventory = scalibr_result.get("Inventory", {})
         packages = inventory.get("Packages", [])
@@ -132,6 +132,8 @@ class ScalibrExtractor(BaseExtractor):
         if not packages:
             return self._create_empty_result()
 
+        # Create DepsDevProvider for API-based tree building
+        depsdev_provider = DepsDevProvider(config, cache)
 
         # Group packages by ecosystem
         ecosystems = {}
@@ -160,6 +162,11 @@ class ScalibrExtractor(BaseExtractor):
                 # Initialize classifier for this ecosystem if not already done
                 if ecosystem not in ecosystem_classifiers:
                     classifier = get_classifier(ecosystem)
+
+                    # Inject DepsDevProvider for API-based tree building
+                    if classifier and depsdev_provider and hasattr(classifier, 'set_depsdev_provider'):
+                        classifier.set_depsdev_provider(depsdev_provider)
+
                     ecosystem_classifiers[ecosystem] = (classifier, set(), set())
 
                 # Get current classifier data

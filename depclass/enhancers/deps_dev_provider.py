@@ -90,6 +90,73 @@ class DepsDevProvider(CacheableMixin):
                 for pkg, ver in packages
             }
 
+    def get_dependency_graph(
+        self, package: str, version: str, ecosystem: str
+    ) -> Dict[str, Any]:
+        """
+        Get dependency graph (nodes and edges) from deps.dev API.
+
+        This endpoint provides parent-child dependency relationships
+        for building dependency trees.
+
+        Args:
+            package: Package name
+            version: Package version
+            ecosystem: Ecosystem name (maven, npm, pypi, cargo, etc.)
+
+        Returns:
+            Dict with 'nodes' and 'edges' representing dependency graph.
+            Returns empty dict if API call fails or package not found.
+        """
+        ecosystem_lower = ecosystem.lower()
+        if ecosystem_lower not in self.ecosystem_mapping:
+            self.logger.warning(f"Unsupported ecosystem for dependency graph: {ecosystem}")
+            return {}
+
+        deps_ecosystem = self.ecosystem_mapping[ecosystem_lower]
+
+        # Check cache first
+        cache_key = f"depsdev_graph:{deps_ecosystem}:{package}:{version}"
+        cached_data = self._get_cached_data(cache_key, self.CACHE_TTL_STANDARD)
+        if cached_data:
+            self.stats["cache_hits"] += 1
+            return cached_data
+
+        # Build API URL
+        encoded_package = quote(package, safe='')
+        url = f"{self.base_url}/{self.api_version}/systems/{deps_ecosystem}/packages/{encoded_package}/versions/{version}:dependencies"
+
+        try:
+            response = self._make_request("GET", url)
+            graph_data = response.json()
+
+            # Cache the result
+            self._cache_data(cache_key, graph_data)
+            self.stats["api_calls"] += 1
+
+            return graph_data
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                self.logger.debug(
+                    f"Dependency graph not found for {package}@{version} "
+                    f"in {deps_ecosystem}"
+                )
+            else:
+                self.logger.error(
+                    f"Failed to fetch dependency graph for {package}@{version}: {e}"
+                )
+            self.stats["errors"] += 1
+            return {}
+
+        except Exception as e:
+            self.logger.error(
+                f"Unexpected error fetching dependency graph for "
+                f"{package}@{version}: {e}"
+            )
+            self.stats["errors"] += 1
+            return {}
+
     def _get_metadata_batch(
         self, packages: List[Tuple[str, str]], ecosystem: str
     ) -> Dict[str, Dict[str, Any]]:

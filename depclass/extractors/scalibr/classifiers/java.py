@@ -31,6 +31,10 @@ class JavaDependencyClassifier(BaseDependencyClassifier):
     # Maven namespace
     MAVEN_NS = {'mvn': 'http://maven.apache.org/POM/4.0.0'}
 
+    def __init__(self):
+        """Initialize Java dependency classifier."""
+        super().__init__()
+
     # Framework-specific parent-child patterns for relationship inference
     # Maps parent artifact patterns to transitive groupId/artifact patterns
     FRAMEWORK_PATTERNS = {
@@ -55,6 +59,94 @@ class JavaDependencyClassifier(BaseDependencyClassifier):
             'artifacts': ['slf4j', 'logback']
         }
     }
+
+    def _extract_package_name(self, package_key: str) -> str:
+        """Extract package name from 'package==version' format."""
+        return package_key.split('==')[0] if '==' in package_key else package_key
+
+    def _has_gradle_lockfile(self, flat_tree: Dict[str, Any]) -> bool:
+        """Check if dependencies were resolved from gradle.lockfile (skips deps.dev API)."""
+        return any(
+            location.endswith("gradle.lockfile")
+            for pkg_info in flat_tree.values()
+            for location in pkg_info.get("locations", [])
+        )
+
+    def _collect_direct_dependencies_from_manifests(
+        self, flat_tree: Dict[str, Any]
+    ) -> Set[str]:
+        """
+        Parse and aggregate direct dependencies from all manifest directories.
+
+        Discovers all unique directories containing manifest files (pom.xml,
+        build.gradle) by examining package locations, then parses each directory
+        to extract direct dependencies. Always includes root directory to catch
+        parent/shared dependencies in multi-module projects.
+
+        Args:
+            flat_tree: Flat dependency tree with location metadata
+
+        Returns:
+            Unified set of direct dependency names (groupId:artifactId)
+        """
+        direct_deps = set()
+        parsed_dirs = set()  # Track already-parsed directories
+
+        # Discover and parse manifest directories from package locations
+        for dep_data in flat_tree.values():
+            for location in dep_data.get("locations", []):
+                dir_path = Path(location).parent
+                manifest_dir = dir_path if str(dir_path) != "." else Path(".")
+
+                # Only parse each directory once
+                if manifest_dir not in parsed_dirs:
+                    parsed_dirs.add(manifest_dir)
+                    self.logger.debug(f"Parsing direct dependencies from: {manifest_dir}")
+                    deps_from_dir = self.get_direct_dependencies(manifest_dir)
+
+                    if deps_from_dir:
+                        self.logger.info(f"Found {len(deps_from_dir)} direct deps in {manifest_dir}")
+                        direct_deps.update(deps_from_dir)
+                    else:
+                        self.logger.warning(f"No direct deps found in {manifest_dir}")
+
+        # Always check root directory for parent/shared dependencies
+        if Path(".") not in parsed_dirs:
+            self.logger.debug("Parsing direct dependencies from root directory: .")
+            root_deps = self.get_direct_dependencies(Path("."))
+            if root_deps:
+                self.logger.info(f"Found {len(root_deps)} direct deps in root directory")
+                direct_deps.update(root_deps)
+            else:
+                self.logger.debug("No direct deps found in root directory")
+
+        return direct_deps
+
+    def _enhance_tree_with_children(
+        self,
+        flat_tree: Dict[str, Any],
+        direct_deps: Set[str],
+        relationships: Dict[str, List[str]],
+        resolution_details: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """Build enhanced tree with children for direct dependencies only."""
+        enhanced_tree = {}
+        for package_key, package_info in flat_tree.items():
+            enhanced_info = package_info.copy()
+            package_name = self._extract_package_name(package_key)
+
+            # Only build children for direct dependencies
+            if package_name in direct_deps:
+                enhanced_info["children"] = self._build_children_recursive(
+                    package_name, relationships, resolution_details,
+                    current_depth=0, max_depth=3, visited=set()
+                )
+            else:
+                enhanced_info["children"] = {}
+
+            enhanced_tree[package_key] = enhanced_info
+
+        return enhanced_tree
 
     def get_direct_dependencies(self, project_path: Path) -> Set[str]:
         """
@@ -328,13 +420,11 @@ class JavaDependencyClassifier(BaseDependencyClassifier):
     def build_dependency_tree(self, flat_tree: Dict[str, Any],
                              resolution_details: Dict[str, str]) -> Dict[str, Any]:
         """
-        Build dependency tree for Java packages following Python/JavaScript approach.
+        Build dependency tree for Java packages.
 
-        This implementation follows the established pattern:
-        - Only DIRECT dependencies get children populated
-        - Allows multiple depth levels (max 3)
-        - Uses visited tracking to prevent infinite loops
-        - Keeps file size reasonable while showing meaningful relationships
+        - Maven (pom.xml): Uses deps.dev API for relationship accuracy
+        - Gradle with lockfile: Skips deps.dev (Scalibr provides complete data)
+        - Fallback: Heuristic inference if API unavailable
 
         Args:
             flat_tree: Flat dependency tree from Scalibr
@@ -343,37 +433,24 @@ class JavaDependencyClassifier(BaseDependencyClassifier):
         Returns:
             Enhanced dependency tree with children for direct dependencies only
         """
-        # Get direct dependencies
-        direct_deps = self.get_direct_dependencies(Path("."))
+        # Only use deps.dev for Maven (pom.xml) - Gradle lockfiles have complete data
+        if self.depsdev_provider and not self._has_gradle_lockfile(flat_tree):
+            return self.build_tree_from_depsdev(
+                flat_tree,
+                resolution_details,
+                ecosystem="maven"
+            )
+
+        # Fallback: Use heuristic inference if deps.dev unavailable
+        direct_deps = self._collect_direct_dependencies_from_manifests(flat_tree)
 
         # Build simplified relationships for Maven/Gradle
         # Since lock files don't provide explicit parent-child relationships,
         # we infer them based on dependency patterns
         relationships = self._infer_java_relationships(flat_tree, direct_deps, resolution_details)
 
-        # Enhanced tree - only direct dependencies get children
-        enhanced_tree = {}
-        for package_key, package_info in flat_tree.items():
-            # Copy existing package info
-            enhanced_info = package_info.copy()
-
-            # Extract package name from 'package==version' format
-            package_name = package_key.split('==')[0] if '==' in package_key else package_key
-
-            # Only build children for DIRECT dependencies (following established approach)
-            if package_name in direct_deps:
-                children = self._build_children_recursive(
-                    package_name, relationships, resolution_details,
-                    current_depth=0, max_depth=3, visited=set()
-                )
-                enhanced_info["children"] = children
-            else:
-                # Transitive dependencies get empty children (like JavaScript/Python)
-                enhanced_info["children"] = {}
-
-            enhanced_tree[package_key] = enhanced_info
-
-        return enhanced_tree
+        # Build enhanced tree with children for direct dependencies
+        return self._enhance_tree_with_children(flat_tree, direct_deps, relationships, resolution_details)
 
     def _infer_java_relationships(
         self,
@@ -406,7 +483,7 @@ class JavaDependencyClassifier(BaseDependencyClassifier):
         # Extract all package names from flat_tree - O(p) where p = total packages
         all_packages = set()
         for package_key in flat_tree.keys():
-            package_name = package_key.split('==')[0] if '==' in package_key else package_key
+            package_name = self._extract_package_name(package_key)
             all_packages.add(package_name)
 
         # Identify transitive dependencies - O(p)
