@@ -5,7 +5,6 @@ Uses OSV Scalibr to detect and extract dependencies from all supported
 package ecosystems except Python (which uses dedicated pip-tools logic).
 """
 
-import json
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from rich.console import Console
 from ..base import BaseExtractor
 from .wrapper import ScalibrWrapper
 from .classifiers import get_classifier
+from ...enhancers.deps_dev_provider import DepsDevProvider
 
 
 class ScalibrExtractor(BaseExtractor):
@@ -91,7 +91,7 @@ class ScalibrExtractor(BaseExtractor):
                 return self._create_empty_result()
 
             # Convert Scalibr results to ecosystem-separated format
-            return self._parse_scalibr_results(scalibr_result, config)
+            return self._parse_scalibr_results(scalibr_result, config, cache)
 
         except Exception as e:
             print(f"⚠️ Scalibr extraction failed: {e}")
@@ -124,7 +124,7 @@ class ScalibrExtractor(BaseExtractor):
             "total_packages": 0
         }
 
-    def _parse_scalibr_results(self, scalibr_result: Dict[str, Any], config: Dict) -> Dict[str, Any]:
+    def _parse_scalibr_results(self, scalibr_result: Dict[str, Any], config: Dict, cache=None) -> Dict[str, Any]:
         """Parse Scalibr output and organize by ecosystem."""
         inventory = scalibr_result.get("Inventory", {})
         packages = inventory.get("Packages", [])
@@ -132,6 +132,8 @@ class ScalibrExtractor(BaseExtractor):
         if not packages:
             return self._create_empty_result()
 
+        # Create DepsDevProvider for API-based tree building
+        depsdev_provider = DepsDevProvider(config, cache)
 
         # Group packages by ecosystem
         ecosystems = {}
@@ -139,6 +141,7 @@ class ScalibrExtractor(BaseExtractor):
         total_packages = 0
 
         # Get classifiers for each ecosystem to determine direct vs transitive
+        # Store: (classifier, direct_deps_set, processed_manifest_dirs)
         ecosystem_classifiers = {}
 
         for package in packages:
@@ -159,14 +162,28 @@ class ScalibrExtractor(BaseExtractor):
                 # Initialize classifier for this ecosystem if not already done
                 if ecosystem not in ecosystem_classifiers:
                     classifier = get_classifier(ecosystem)
-                    if classifier:
-                        direct_deps = classifier.get_direct_dependencies(Path(self.project_path))
-                        ecosystem_classifiers[ecosystem] = (classifier, direct_deps)
-                    else:
-                        ecosystem_classifiers[ecosystem] = (None, set())
 
-                # Get classifier data for this ecosystem
-                classifier, direct_deps = ecosystem_classifiers[ecosystem]
+                    # Inject DepsDevProvider for API-based tree building
+                    if classifier and depsdev_provider and hasattr(classifier, 'set_depsdev_provider'):
+                        classifier.set_depsdev_provider(depsdev_provider)
+
+                    ecosystem_classifiers[ecosystem] = (classifier, set(), set())
+
+                # Get current classifier data
+                classifier, direct_deps, processed_dirs = ecosystem_classifiers[ecosystem]
+
+                # Process any new manifest directories from this package's locations
+                if classifier:
+                    locations = package.get("Locations", [])
+                    for location in locations:
+                        manifest_path = Path(self.project_path) / location
+                        if manifest_path.exists() and manifest_path.is_file():
+                            manifest_dir = manifest_path.parent
+                            # Only process each manifest directory once
+                            if manifest_dir not in processed_dirs:
+                                dir_direct_deps = classifier.get_direct_dependencies(manifest_dir)
+                                direct_deps.update(dir_direct_deps)
+                                processed_dirs.add(manifest_dir)
 
                 self._add_package_to_ecosystem(package, ecosystems[ecosystem], ecosystem, direct_deps)
                 ecosystems_detected.add(ecosystem)
@@ -182,7 +199,7 @@ class ScalibrExtractor(BaseExtractor):
             classifier_info = ecosystem_classifiers.get(ecosystem_name)
             classifier = None
             if classifier_info:
-                classifier, _ = classifier_info
+                classifier, _, _ = classifier_info
                 enhanced_tree = classifier.build_dependency_tree(
                     ecosystem_data["dependencies_analysis"]["dependency_tree"],
                     ecosystem_data["dependencies_analysis"]["resolution_details"]
