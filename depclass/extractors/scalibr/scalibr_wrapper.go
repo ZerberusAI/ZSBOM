@@ -38,7 +38,12 @@ type PluginInfo struct {
 
 //export GetAllPlugins
 func GetAllPlugins() *C.char {
-    allPlugins := pl.All()
+    allPlugins, err := pl.All(nil)
+    if err != nil {
+        errResp := map[string]string{"error": fmt.Sprintf("Failed to get all plugins: %v", err)}
+        errJSON, _ := json.Marshal(errResp)
+        return C.CString(string(errJSON))
+    }
     var plugins []PluginInfo
 
     for _, p := range allPlugins {
@@ -132,7 +137,7 @@ func Scan(root *C.char, pluginsJSON *C.char, mode *C.char) *C.char {
 
     if len(pluginList) > 0 {
         // Use specified plugins
-        plugins, err = pl.FromNames(pluginList)
+        plugins, err = pl.FromNames(pluginList, nil)
         if err != nil {
             errResp := map[string]string{"error": fmt.Sprintf("Failed to resolve plugins: %v", err)}
             errJSON, _ := json.Marshal(errResp)
@@ -140,7 +145,12 @@ func Scan(root *C.char, pluginsJSON *C.char, mode *C.char) *C.char {
         }
     } else {
         // Use default plugins based on capabilities
-        plugins = pl.FromCapabilities(capabilities)
+        plugins, err = pl.FromCapabilities(capabilities, nil)
+        if err != nil {
+            errResp := map[string]string{"error": fmt.Sprintf("Failed to get plugins from capabilities: %v", err)}
+            errJSON, _ := json.Marshal(errResp)
+            return C.CString(string(errJSON))
+        }
     }
 
     // Create scan configuration with explicit recursive scanning settings

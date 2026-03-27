@@ -72,9 +72,10 @@ class ScalibrExtractor(BaseExtractor):
             if self._is_java_project():
                 # Use online Java plugin to resolve transitive dependencies
                 plugins.extend([
-                    "java/pomxmlnet",                        # Maven pom.xml (online - resolves transitive deps)
+                    "java/pomxml",                           # Maven pom.xml
                     "java/gradlelockfile",                   # Gradle lock file
-                    "java/gradleverificationmetadataxml"     # Gradle verification
+                    "java/gradleverificationmetadataxml",    # Gradle verification
+                    "transitivedependency/pomxml",           # Maven transitive dependency resolution (enricher)
                 ])
 
             if not plugins:
