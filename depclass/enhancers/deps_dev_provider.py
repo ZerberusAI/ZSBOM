@@ -13,6 +13,7 @@ from urllib.parse import quote, urlparse
 import requests
 
 from ..db.vulnerability import VulnerabilityCache
+from ..utils.api_error_handler import handle_external_api_errors
 from .formatters import PackageKeyFormatter
 from .constants import DEPSDEV_ECOSYSTEM_MAPPING
 from .mixins import CacheableMixin
@@ -90,6 +91,7 @@ class DepsDevProvider(CacheableMixin):
                 for pkg, ver in packages
             }
 
+    @handle_external_api_errors(service="deps.dev", return_on_error={})
     def get_dependency_graph(
         self, package: str, version: str, ecosystem: str
     ) -> Dict[str, Any]:
@@ -126,58 +128,15 @@ class DepsDevProvider(CacheableMixin):
         encoded_package = quote(package, safe='')
         url = f"{self.base_url}/{self.api_version}/systems/{deps_ecosystem}/packages/{encoded_package}/versions/{version}:dependencies"
 
-        try:
-            response = self._make_request("GET", url)
-            graph_data = response.json()
+        # Make API request (decorator handles all exceptions)
+        response = self._make_request("GET", url)
+        graph_data = response.json()
 
-            # Cache the result
-            self._cache_data(cache_key, graph_data)
-            self.stats["api_calls"] += 1
+        # Cache the result
+        self._cache_data(cache_key, graph_data)
+        self.stats["api_calls"] += 1
 
-            return graph_data
-
-        except requests.exceptions.Timeout:
-            self.logger.warning(
-                f"Timeout while fetching dependency graph for {package}@{version}"
-            )
-            self.stats["errors"] += 1
-            return {}
-
-        except requests.exceptions.ConnectionError:
-            self.logger.warning(
-                f"Network or access issue while fetching dependency graph for "
-                f"{package}@{version}. This may be restricted in your environment."
-            )
-            self.stats["errors"] += 1
-            return {}
-
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                self.logger.debug(
-                    f"Dependency graph not found for {package}@{version} "
-                    f"in {deps_ecosystem}"
-                )
-            else:
-                self.logger.error(
-                    f"Failed to fetch dependency graph for {package}@{version}: {e}"
-                )
-            self.stats["errors"] += 1
-            return {}
-
-        except requests.exceptions.RequestException as e:
-            self.logger.error(
-                f"Request failed for dependency graph {package}@{version}: {e}"
-            )
-            self.stats["errors"] += 1
-            return {}
-
-        except Exception as e:
-            self.logger.error(
-                f"Unexpected error fetching dependency graph for "
-                f"{package}@{version}: {e}"
-            )
-            self.stats["errors"] += 1
-            return {}
+        return graph_data
 
     def _get_metadata_batch(
         self, packages: List[Tuple[str, str]], ecosystem: str
@@ -394,15 +353,12 @@ class DepsDevProvider(CacheableMixin):
             },
         }
 
+    @handle_external_api_errors(service="deps.dev", return_on_error={})
     def _fetch_package_info(self, ecosystem: str, package: str) -> Dict[str, Any]:
         """Fetch package info from deps.dev."""
         url = f"{self.base_url}/{self.api_version}/systems/{ecosystem}/packages/{quote(package, safe='')}"
-        try:
-            response = self._make_request("GET", url)
-            return response.json()
-        except Exception as e:
-            self.logger.warning(f"Failed to fetch package info for {package}: {e}")
-            return {}
+        response = self._make_request("GET", url)
+        return response.json()
 
     def _get_project_batch(self, project_ids: Set[str]) -> Dict[str, Dict[str, Any]]:
         """Get multiple projects using batch API."""
@@ -571,6 +527,7 @@ class DepsDevProvider(CacheableMixin):
             self.logger.warning(f"Failed to extract release activity from package info: {e}")
             return {"releases_count": 0, "latest_release_date": "", "has_releases": False, "recent_releases": []}
 
+    @handle_external_api_errors(service="deps.dev", return_on_error={})
     def _fetch_project_info(self, project_id: str) -> Dict[str, Any]:
         """Fetch project info from deps.dev."""
         if not project_id:
@@ -585,16 +542,12 @@ class DepsDevProvider(CacheableMixin):
         url = (
             f"{self.base_url}/{self.api_version}/projects/{quote(project_id, safe='')}"
         )
-        try:
-            response = self._make_request("GET", url)
-            project_data = response.json()
+        response = self._make_request("GET", url)
+        project_data = response.json()
 
-            # Cache the project data
-            self._cache_data(cache_key, project_data)
-            return project_data
-        except Exception as e:
-            self.logger.warning(f"Failed to fetch project info for {project_id}: {e}")
-            return {}
+        # Cache the project data
+        self._cache_data(cache_key, project_data)
+        return project_data
 
     def _organize_links(
         self, version_links: List[Dict[str, Any]], project_data: Dict[str, Any]
