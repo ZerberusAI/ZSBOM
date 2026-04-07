@@ -1,5 +1,6 @@
 # Include the license
 include LICENSE
+include THIRD_PARTY_LICENSES
 
 # Include configuration files
 include pyproject.toml

@@ -195,3 +195,13 @@ We welcome contributions from the open-source community! To contribute:
 - Ensure unit tests are added (`pytest` recommended).
 - Provide clear commit messages and documentation updates.
 - If adding a new feature, ensure it integrates well with **SBOM formats (CycloneDX/SPDX)**.
+
+### 9. Acknowledgments
+
+ZSBOM's multi-ecosystem dependency extraction is powered by [OSV-Scalibr](https://github.com/google/osv-scalibr), an open-source project by Google. Scalibr enables ZSBOM to scan and analyze dependencies across NPM/JavaScript, Java (Maven/Gradle), and Go ecosystems alongside its native Python support.
+
+### 10. License
+
+ZSBOM is licensed under the [MIT License](LICENSE).
+
+Third-party dependencies used by this project are subject to their own licenses. See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) for details.
