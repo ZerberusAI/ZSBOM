@@ -156,8 +156,10 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Acknowledgments
 
-ZSBOM's multi-ecosystem dependency extraction is powered by [OSV-Scalibr](https://github.com/google/osv-scalibr), an open-source project by Google.
+ZSBOM's multi-ecosystem dependency extraction is powered by [OSV-Scalibr](https://github.com/google/osv-scalibr), an open-source project by Google. Scalibr enables ZSBOM to scan and analyze dependencies across NPM/JavaScript, Java (Maven/Gradle), and Go ecosystems alongside its native Python support.
 
 ## License
 
-ZSBOM is licensed under the [MIT License](LICENSE). Third-party licenses are documented in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+ZSBOM is licensed under the [MIT License](LICENSE).
+
+Third-party dependencies used by this project are subject to their own licenses. See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) for details.
