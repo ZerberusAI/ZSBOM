@@ -1,207 +1,163 @@
-# ZSBOM
+<p align="center">
+  <img src="assets/ZEB_v1.png" alt="Zerberus" width="280">
+</p>
 
-## Zerberus SBOM Automation Framework
+<h1 align="center">ZSBOM</h1>
 
-### 1. Intent & Purpose
-ZSBOM is an open-source framework designed to automate **dependency classification, validation, and SBOM (Software Bill of Materials) generation**. The purpose of this project is to help developers, security teams, and DevOps engineers:
-- Extract dependencies from Python projects.
-- Classify them based on open-source licensing, security risks, and direct vs transitive relationships.
-- Generate industry-standard SBOMs in **CycloneDX** and **SPDX** formats.
-- Validate dependencies against **security vulnerabilities (CVEs)**, **license compliance**, and **best practices**.
-- Seamlessly integrate dependency tracking into **CI/CD pipelines**.
+<p align="center">
+  <strong>Automated SBOM generation and dependency security analysis</strong>
+</p>
 
-### 2. Terminology
-This repository follows the terminology defined in the **Python Packaging User Guide Glossary**. Non-Python package users should note that some terminology may differ from other software ecosystems.
+<p align="center">
+  <a href="https://github.com/ZerberusAI/ZSBOM"><img src="https://img.shields.io/badge/version-0.14.0--beta-blue" alt="Version"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.8%2B-3776AB" alt="Python 3.8+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <a href="https://cyclonedx.org/"><img src="https://img.shields.io/badge/SBOM-CycloneDX%20v1.6-brightgreen" alt="CycloneDX"></a>
+</p>
 
-### 3. Motivation
-#### **Regulations & Compliance**
+---
+
+## What is ZSBOM?
+
+ZSBOM automates **dependency classification, security validation, and SBOM (Software Bill of Materials) generation** for your software projects. It scans dependencies across multiple ecosystems, identifies vulnerabilities, assesses risk, and produces a standards-compliant [CycloneDX](https://cyclonedx.org/) SBOM — all with a single command.
+
+### Why SBOMs Matter
+
 SBOMs are essential for tracking software composition and are increasingly required under software security regulations such as:
+
 - **Secure Software Development Framework (SSDF)**
 - **Cyber Resilience Act (CRA)**
 - **NIST Cybersecurity Framework (CSF)**
 - **NTIA Minimum Elements for an SBOM (CISA)**
 
-#### **Phantom Dependencies & Security Risks**
-Python packages often bundle non-Python dependencies (C/C++, Rust, Fortran, JavaScript, etc.), making **Software Composition Analysis (SCA)** challenging. ZSBOM aims to:
-- Identify **hidden dependencies** that aren't explicitly listed.
-- Ensure accurate **security risk assessment** of dependencies.
+ZSBOM helps developers, security teams, and DevOps engineers stay ahead of these requirements by automating the entire pipeline — from dependency extraction to compliance-ready SBOM output.
 
-### 4. How to Use ZSBOM in Your Project
-#### Installation Options
+### Key Features
 
-##### For General Users (Recommended CLI Usage)
-To install ZSBOM as a command-line tool from GitHub:
+- **Multi-Ecosystem Scanning** — Python, JavaScript/NPM, and Java (Maven & Gradle) with full transitive dependency resolution
+- **Security Validation** — CVE detection via [OSV.dev](https://osv.dev/), CWE weakness mapping, abandoned package detection, and typosquatting analysis
+- **Risk Scoring** — 5-factor scoring framework with configurable weights and thresholds
+- **CycloneDX v1.6 SBOM** — Industry-standard output with embedded vulnerability data
+- **Single Command** — Auto-detects ecosystems and runs the full pipeline
+
+## Quick Start
+
 ```sh
+# Install ZSBOM
 pip install git+https://github.com/ZerberusAI/ZSBOM.git
+
+# Navigate to your project
+cd your-project/
+
+# Run a full scan
+zsbom scan
 ```
 
-After installation, you can run ZSBOM directly from your terminal:
+> **Note:** [Go 1.21+](https://golang.org/dl/) is required for JavaScript/NPM and Java ecosystem scanning (used to build the [OSV-Scalibr](https://github.com/google/osv-scalibr) integration).
+
+## Supported Ecosystems
+
+| Ecosystem | Detected Files | Transitive Deps |
+|-----------|---------------|:---------------:|
+| **Python** | `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg`, `Pipfile` | Yes |
+| **JavaScript / NPM** | `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` | Yes |
+| **Java (Maven)** | `pom.xml` | Yes |
+| **Java (Gradle)** | `build.gradle`, `gradle.lockfile` | Yes |
+
+> More ecosystems (Go, Rust, Ruby, PHP, C#/.NET) are on the [roadmap](#roadmap).
+
+## How It Works
+
+```
+ Detect Ecosystems ➜ Extract Dependencies ➜ Validate Security ➜ Assess Risk ➜ Generate SBOM
+```
+
+1. **Detect** — Auto-discovers project ecosystems by scanning for manifest and lock files
+2. **Extract** — Resolves the full dependency tree, including transitive dependencies
+3. **Validate** — Checks every package against CVE databases (OSV.dev), CWE mappings (MITRE), and heuristic checks
+4. **Score** — Calculates a per-package risk score across five weighted dimensions
+5. **Generate** — Produces a CycloneDX v1.6 SBOM with embedded vulnerability and risk data
+
+## Output
+
+ZSBOM generates the following files in your project root:
+
+| File | Description |
+|------|-------------|
+| `sbom.json` | CycloneDX v1.6 SBOM with components and vulnerabilities |
+| `risk_report.json` | Per-dependency risk scores across all dimensions |
+| `dependencies.json` | Full dependency tree with ecosystem and classification metadata |
+| `validation_report.json` | CVE and CWE findings from security validation |
+| `scan_metadata.json` | Scan context — timestamps, configuration, statistics |
+
+<details>
+<summary>Example SBOM component</summary>
+
+```json
+{
+  "bom-ref": "BomRef.1418539545444415.5659785824827717",
+  "name": "@img/sharp-libvips-linuxmusl-arm64",
+  "purl": "pkg:npm/%40img/sharp-libvips-linuxmusl-arm64@1.0.4",
+  "type": "library",
+  "version": "1.0.4"
+}
+```
+
+</details>
+
+## Risk Scoring
+
+ZSBOM scores every dependency on a 0–100 scale using the **ZSBOM Risk Scoring Framework v1.0**:
+
+| Dimension | Weight | What It Measures |
+|-----------|:------:|------------------|
+| Known CVEs | 30% | Active vulnerabilities from OSV.dev |
+| Package Abandonment | 20% | Maintenance status and commit activity |
+| CWE Coverage | 20% | Weakness patterns from MITRE |
+| Typosquatting Risk | 15% | Name similarity to popular packages |
+| Version Mismatch | 15% | Declared vs. installed version drift |
+
+**Thresholds:** 80–100 = Low Risk, 50–79 = Medium Risk, 0–49 = High Risk
+
+Weights and thresholds are fully configurable via `config.yaml`.
+
+## CLI Usage
 
 ```sh
-zsbom --help
-zsbom
+zsbom scan                          # Full scan (default)
+zsbom scan -c custom_config.yaml    # Use a custom configuration file
+zsbom scan -o output.json           # Override SBOM output path
+zsbom scan --skip-sbom              # Run validation and risk assessment only
+zsbom scan --ignore-conflicts       # Continue despite dependency conflicts
 ```
 
-#### For local development
-```sh
-git clone https://github.com/ZerberusAI/ZSBOM.git
-cd ZSBOM
-pip install .
-```
+ZSBOM works out of the box with sensible defaults. See [`depclass/config/default.yaml`](depclass/config/default.yaml) for the full configuration reference.
 
-#### Integrating with a Project
-You can **integrate ZSBOM** into your existing Python project by:
-1. Importing it as a module:
-   ```python
-   from depclass.extract import extract
-   deps = extract()
-   print(deps)
-   ```
-2. Running it as a standalone CLI tool:
-   ```sh
-   zsbom
-   ```
-3. Embedding it in a **CI/CD pipeline** (see next section for GitHub Actions workflow).
+## Continuous Monitoring
 
-### 5. How It All Fits Together
-1. **Project dependencies are scanned** using ZSBOM.
-2. **SBOM files are generated** and stored in the project root directory `sbom.json`.
-3. **SBOM metadata is embedded** into `pyproject.toml` to enable automated tracking.
-4. **CI/CD pipelines validate dependencies** and security risks before deployment.
-5. **Packages are scored across five metadata dimensions** (version drift, known CVEs, CWE mappings, abandonment, typosquatting) to classify their risk level. Scoring weights are configurable via the `risk_model` section of `config.yaml`.
+For continuous monitoring, CI/CD integration, and team dashboards — explore the [Trace-AI platform](https://trace-ai.dev).
 
-### 6. CI/CD Integration Example (GitHub Actions)
-This section provides an example of how to integrate ZSBOM into a GitHub Actions workflow to automatically scan your project on pull requests to the `main` branch.
+## Roadmap
 
-#### GitHub Actions Workflow
-Create a file named `.github/workflows/zsbom_scan.yml` (or any other `.yml` file) in your project's repository with the following content:
+- SPDX SBOM format support
+- Additional ecosystem support — Go, Rust, Ruby, PHP, C#/.NET
+- Container image scanning
+- Full offline mode with local vulnerability database
+- Cross-language dependency detection (C/C++ bundled in Python wheels)
+- Performance improvements — multithreading and result pagination
 
-```yaml
-name: PR ZSBOM Scan
+## Contributing
 
-on:
-  pull_request:
-    branches: ["main"]
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
 
-permissions:
-  contents: read          # Required to checkout the repository
-  # pull-requests: write # Uncomment if you plan to add PR comments with scan results
+## Security
 
-jobs:
-  zsbom-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9' # Adjust to your project's Python version
+## Acknowledgments
 
-      - name: Install project dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # This step installs dependencies for YOUR project.
-          # Modify it according to your project's dependency management.
-          if [ -f requirements.txt ]; then
-            echo "Installing project dependencies from requirements.txt"
-            pip install -r requirements.txt
-          elif [ -f pyproject.toml ]; then # Assumes setuptools/build or similar PEP 517 build backend
-            echo "Installing project dependencies using pip from pyproject.toml"
-            pip install . # This will install the package defined by pyproject.toml
-          # Example for Poetry (if poetry.lock exists and you use Poetry):
-          # elif [ -f pyproject.toml ] && [ -f poetry.lock ]; then
-          #   echo "Installing project dependencies using Poetry"
-          #   pip install poetry
-          #   poetry install --no-dev # Or poetry install if dev dependencies are needed for the scan
-          else
-            echo "No primary dependency file (requirements.txt or pyproject.toml for pip installable package) found for the project."
-            # Consider failing the job if dependencies are crucial for an accurate scan
-            # exit 1
-          fi
+ZSBOM's multi-ecosystem dependency extraction is powered by [OSV-Scalibr](https://github.com/google/osv-scalibr), an open-source project by Google.
 
-      - name: Install ZSBOM
-        run: |
-          # Installs the latest version of ZSBOM CLI from its GitHub repository
-          pip install git+https://github.com/ZerberusAI/ZSBOM.git
+## License
 
-      - name: Run ZSBOM scan
-        run: |
-          # This command runs ZSBOM.
-          # It assumes a 'config.yaml' for ZSBOM exists in your repository root,
-          # or ZSBOM's default configuration is sufficient for your needs.
-          # You might need to specify a config file, e.g.:
-          # zsbom --config path/to/your/zsbom_config.yaml
-          # Ensure your ZSBOM configuration outputs to 'sbom.json' (or adjust the artifact path below).
-          zsbom
-
-      - name: Upload ZSBOM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-json
-          path: sbom.json # This should match the output file path configured in ZSBOM
-          if-no-files-found: error # Optional: Fails the step if sbom.json is not found
-```
-
-#### Workflow Explanation:
-- Trigger: This workflow runs on every pull request targeting the main branch.
-- Permissions: It needs contents: read to check out your code. If you want the workflow to comment on PRs (e.g., with a summary or link to the SBOM), you'd uncomment pull-requests: write.
-- Python Setup: It sets up a specified Python version. Adjust '3.9' as needed.
-- Install Project Dependencies: This crucial step installs the dependencies of the project being scanned. You'll likely need to customize this block based on whether your project uses requirements.txt, pyproject.toml (with pip install .), Poetry, or another package manager.
-- Install ZSBOM: It installs the ZSBOM tool directly from its GitHub repository.
-- Run ZSBOM Scan: This executes ZSBOM. By default, it might look for a config.yaml in the root of your project. You can customize the command to point to a specific configuration file. Ensure this configuration directs output to sbom.json.
-- Upload Artifact: The generated sbom.json file is uploaded as an artifact, allowing you to download and inspect it after the workflow run.
-This workflow provides a basic template. You can expand it to include steps like failing the build on critical vulnerabilities (if ZSBOM supports such exit codes and reporting), or integrating with other security tools.
-
-### 7. Proposal & Future Enhancements
-- **Cross-language dependency detection** (e.g., Rust, C++, JavaScript in Python wheels).
-- **Integration with PyPI & Package Managers** (automated SBOM checks for package uploads).
-- **Enhanced risk scoring** using CVE tracking and license policy enforcement.
-- **Multithreading** for improved performance.
-- **Pagination for OSV API results** to handle large datasets.
-- Implement logic to **fetch fresh package data from source if changes are detected**, bypassing cache.
-- Refine **severity scoring for vulnerabilities**.
-- Add capability for **container image scanning**.
-- Develop **full offline support** using a local vulnerability database.
-- Implement **isolated package installation** for ZSBOM and the project it scans, to avoid conflicts.
-
-### 8. How to Contribute
-We welcome contributions from the open-source community! To contribute:
-#### Steps to Get Started:
-1. **Fork the Repository**: Click the 'Fork' button at the top right of [ZSBOM GitHub Repo](https://github.com/ZerberusAI/ZSBOM).
-2. **Clone Your Fork**:
-   ```sh
-   git clone https://github.com/yourusername/ZSBOM.git
-   cd ZSBOM
-   ```
-3. **Create a Branch**:
-   ```sh
-   git checkout -b feature-branch
-   ```
-4. **Make Your Changes & Commit**:
-   ```sh
-   git add .
-   git commit -m "Added new classification logic"
-   ```
-5. **Push to GitHub**:
-   ```sh
-   git push origin feature-branch
-   ```
-6. **Submit a Pull Request (PR)**: Open a PR from your forked repo to the main **ZSBOM** repository.
-
-#### Contribution Guidelines:
-- Follow **PEP 8** coding standards.
-- Ensure unit tests are added (`pytest` recommended).
-- Provide clear commit messages and documentation updates.
-- If adding a new feature, ensure it integrates well with **SBOM formats (CycloneDX/SPDX)**.
-
-### 9. Acknowledgments
-
-ZSBOM's multi-ecosystem dependency extraction is powered by [OSV-Scalibr](https://github.com/google/osv-scalibr), an open-source project by Google. Scalibr enables ZSBOM to scan and analyze dependencies across NPM/JavaScript, Java (Maven/Gradle), and Go ecosystems alongside its native Python support.
-
-### 10. License
-
-ZSBOM is licensed under the [MIT License](LICENSE).
-
-Third-party dependencies used by this project are subject to their own licenses. See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) for details.
+ZSBOM is licensed under the [MIT License](LICENSE). Third-party licenses are documented in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
