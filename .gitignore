@@ -1,5 +1,6 @@
 */__pycache__/*
 venv
+.venv
 validation_report.json
 dependencies.json
 sbom.json
