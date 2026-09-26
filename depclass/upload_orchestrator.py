@@ -5,6 +5,7 @@ import time
 import os
 import json
 import re
+from dataclasses import asdict
 from datetime import datetime
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,6 +30,21 @@ from depclass.threshold_checker import ThresholdChecker, ThresholdConfig as ZSBO
 from depclass.github.pr_comment_generator import PRCommentGenerator
 
 
+
+def _s3_error_reason(response) -> str:
+    """S3 explains presigned POST rejections in an XML <Error> body."""
+    body = response.text or ""
+    parts = [
+        match.group(1)
+        for match in (
+            re.search(r"<Code>(.*?)</Code>", body),
+            re.search(r"<Message>(.*?)</Message>", body),
+        )
+        if match
+    ]
+    return ": ".join(parts) if parts else (body[:300] or response.reason or "no details")
+
+
 class UploadOrchestrator:
     """Simplified upload orchestrator with Rich UI progress tracking."""
     
@@ -42,61 +58,89 @@ class UploadOrchestrator:
         self.metadata_collector = metadata_collector
     
     def execute_upload_workflow(self, scan_files: Dict[str, str], scan_metadata: dict) -> UploadResult:
-        """Execute simplified upload workflow with Rich progress."""
+        """Upload the scan files, acknowledge the upload, and report exactly what happened."""
         start_time = time.time()
         threshold_result = None
         report_url = None
+        scan_id = None
+        file_results: List[Dict] = []
 
         try:
             # Basic file validation
             valid_files = {k: v for k, v in scan_files.items() if os.path.exists(v)}
             if not valid_files:
                 return UploadResult(success=False, error="No valid files found for upload")
-            
+
             # Phase 1: Initiate scan
             self.console.print("🚀 Initiating scan with Zerberus...", style="cyan")
             scan_id = self._initiate_scan(scan_metadata)
             self.console.print(f"✅ Scan initiated: {scan_id[:8]}...", style="green")
-            
+
             # Update scan_metadata.json with API scan_id and threshold config before uploading
             if "scan_metadata.json" in valid_files:
                 self._update_metadata_file(valid_files["scan_metadata.json"], scan_id, scan_metadata)
-            
+
             # Phase 2: Upload files with progress
             self.console.print("📤 Uploading files...", style="cyan")
             file_results = self._upload_files_with_progress(scan_id, valid_files)
+            failed_files = [f for f in file_results if not f.get("success")]
+            if failed_files:
+                self.console.print(
+                    f"❌ Upload incomplete ({len(file_results) - len(failed_files)}/{len(file_results)} files):",
+                    style="bold red",
+                )
+                for failed in failed_files:
+                    self.console.print(f"   • {failed['filename']}: {failed.get('error', 'unknown error')}", style="red")
 
-            # Phase 3: Run threshold validation if threshold config is available
-            # Do this BEFORE completing upload so we have threshold results even if upload fails
+            # Phase 3: The threshold check reads the local validation report,
+            # so it doesn't depend on the upload having worked.
             threshold_result = self._run_threshold_validation()
 
-            # Phase 4: Complete upload
+            # Phase 4: Always acknowledge, so the server records a failed
+            # upload and why, instead of leaving the scan in progress.
             report_url = self._complete_upload(scan_id, file_results)
 
-            # Success message
-            self.console.print(f"✅ Upload completed successfully!", style="bold green")
+            if failed_files:
+                return UploadResult(
+                    success=False,
+                    scan_id=scan_id,
+                    report_url=report_url,
+                    error=f"Upload incomplete: {len(failed_files)} of {len(file_results)} files failed",
+                    file_results=file_results,
+                    total_time_seconds=time.time() - start_time,
+                    threshold_result=threshold_result,
+                )
+
+            self.console.print("✅ Upload completed successfully!", style="bold green")
             self.console.print(f"📊 Report URL: {report_url}", style="green")
 
-            # Display threshold results if validation was run
             if threshold_result:
                 if threshold_result.should_fail_build:
                     self.console.print(f"❌ Threshold exceeded: {threshold_result.failure_reason}", style="bold red")
                 else:
-                    self.console.print(f"✅ Threshold validation passed (score: {threshold_result.calculated_score}/{threshold_result.max_threshold})", style="green")
-            
-            total_time = time.time() - start_time
+                    self.console.print(
+                        f"✅ CVE threshold passed (CVE severity score: {threshold_result.calculated_score}/{threshold_result.max_threshold})",
+                        style="green",
+                    )
+
             return UploadResult(
                 success=True,
                 scan_id=scan_id,
                 report_url=report_url,
                 file_results=file_results,
-                total_time_seconds=total_time,
-                threshold_result=threshold_result
+                total_time_seconds=time.time() - start_time,
+                threshold_result=threshold_result,
             )
-            
+
         except Exception as e:
             self.console.print(f"❌ Upload failed: {str(e)}", style="red")
-            return UploadResult(success=False, error=str(e))
+            return UploadResult(
+                success=False,
+                scan_id=scan_id,
+                error=str(e),
+                file_results=file_results or None,
+                threshold_result=threshold_result,
+            )
 
         finally:
             # Phase 5: Generate PR comment for GitHub Actions (only for pull requests)
@@ -311,8 +355,12 @@ class UploadOrchestrator:
 
             # Upload to S3
             response = requests.post(presigned_url.url, data=data, files=files)
-            
-            response.raise_for_status()
+            if not response.ok:
+                return {
+                    "filename": filename,
+                    "success": False,
+                    "error": f"S3 rejected the upload ({response.status_code}): {_s3_error_reason(response)}",
+                }
             
             return {
                 "filename": filename,
@@ -342,7 +390,11 @@ class UploadOrchestrator:
         
         # Create completion request
         completion_request = CompletionRequest(
-            upload_status=UploadStatus.COMPLETED if not failed_files else UploadStatus.PARTIAL,
+            upload_status=(
+                UploadStatus.COMPLETED if not failed_files
+                else UploadStatus.FAILED if not successful_files
+                else UploadStatus.PARTIAL
+            ),
             uploaded_files=[f["filename"] for f in successful_files],
             failed_files=[f["filename"] for f in failed_files],
             completed_at=datetime.utcnow(),
@@ -415,7 +467,9 @@ class UploadOrchestrator:
                 should_fail_build=zsbom_result.should_fail_build,
                 calculated_score=zsbom_result.calculated_score,
                 max_threshold=zsbom_result.max_threshold,
-                failure_reason=zsbom_result.failure_reason
+                failure_reason=zsbom_result.failure_reason,
+                critical_vulnerabilities_found=zsbom_result.critical_vulnerabilities_found,
+                critical_count=zsbom_result.vulnerability_counts.critical,
             )
             
             # Update scan_metadata.json with threshold results
@@ -459,12 +513,14 @@ class UploadOrchestrator:
     ) -> None:
         """Generate PR comment markdown file for GitHub Actions."""
         try:
+            threshold_config = getattr(self, "_threshold_config", None)
             generator = PRCommentGenerator(
                 validation_report_path="validation_report.json",
                 risk_report_path="risk_report.json",
                 scan_metadata=scan_metadata,
                 threshold_result=threshold_result,
-                report_url=report_url
+                report_url=report_url,
+                threshold_config=asdict(threshold_config) if threshold_config else None,
             )
 
             comment_content = generator.generate()
