@@ -300,6 +300,33 @@ class TestUploadOrchestratorIntegration:
         assert result.success is False
         assert "missing required file(s): dependencies.json" in result.error
 
+    @patch('depclass.upload_orchestrator.requests.post')
+    @patch('depclass.upload_orchestrator.ZerberusAPIClient')
+    def test_rejected_upload_pr_comment_says_upload_failed(self, mock_api_client, mock_post, tmp_path, monkeypatch):
+        """The PR comment must not say PASSED when the upload was rejected."""
+        monkeypatch.chdir(tmp_path)
+        mock_client = self.create_mock_api_client()
+        mock_api_client.return_value = mock_client
+        mock_client.initiate_scan.return_value = Mock(scan_id="scan-id-123", threshold_config=None)
+        mock_client.acknowledge_completion.side_effect = APIConnectionError(
+            "422 error from ack: Upload incomplete: missing required file(s): dependencies.json. Re-run the ZSBOM workflow.",
+            status_code=422,
+        )
+        mock_post.return_value = Mock(ok=True, status_code=204)
+        scan_files, temp_files = self.create_test_files()
+        self.mock_upload_urls(mock_client, scan_files)
+        scan_metadata = {"ci_context": {"is_ci": True, "event_type": "pull_request"}}
+
+        try:
+            self.orchestrator.execute_upload_workflow(scan_files, scan_metadata)
+        finally:
+            self.cleanup_files(temp_files)
+
+        comment = (tmp_path / "pr_comment.md").read_text()
+        assert "PASSED" not in comment
+        assert "UPLOAD FAILED" in comment
+        assert "missing required file(s): dependencies.json" in comment
+
     def test_threshold_result_says_when_criticals_blocked_the_build(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "validation_report.json").write_text(json.dumps(

@@ -63,6 +63,7 @@ class UploadOrchestrator:
         threshold_result = None
         report_url = None
         scan_id = None
+        upload_error = None
         file_results: List[Dict] = []
 
         try:
@@ -101,11 +102,12 @@ class UploadOrchestrator:
             report_url = self._complete_upload(scan_id, file_results)
 
             if failed_files:
+                upload_error = f"Upload incomplete: {len(failed_files)} of {len(file_results)} files failed"
                 return UploadResult(
                     success=False,
                     scan_id=scan_id,
                     report_url=report_url,
-                    error=f"Upload incomplete: {len(failed_files)} of {len(file_results)} files failed",
+                    error=upload_error,
                     file_results=file_results,
                     total_time_seconds=time.time() - start_time,
                     threshold_result=threshold_result,
@@ -133,7 +135,8 @@ class UploadOrchestrator:
             )
 
         except Exception as e:
-            self.console.print(f"❌ Upload failed: {str(e)}", style="red")
+            upload_error = str(e)
+            self.console.print(f"❌ Upload failed: {upload_error}", style="red")
             return UploadResult(
                 success=False,
                 scan_id=scan_id,
@@ -151,7 +154,7 @@ class UploadOrchestrator:
                     # Read dashboard URL from environment or use default
                     dashboard_base_url = os.getenv("ZERBERUS_DASHBOARD_URL", "https://app.zerberus.ai")
                     final_report_url = report_url if report_url else f"{dashboard_base_url}/trace-ai/dashboard"
-                    self._generate_pr_comment_file(scan_metadata, threshold_result, final_report_url)
+                    self._generate_pr_comment_file(scan_metadata, threshold_result, final_report_url, upload_error)
                 except Exception as comment_error:
                     # Don't fail the entire upload if PR comment generation fails
                     self.console.print(f"⚠️ Failed to generate PR comment: {str(comment_error)}", style="yellow")
@@ -509,7 +512,8 @@ class UploadOrchestrator:
         self,
         scan_metadata: dict,
         threshold_result: Optional[ThresholdResult],
-        report_url: str
+        report_url: str,
+        upload_error: Optional[str] = None,
     ) -> None:
         """Generate PR comment markdown file for GitHub Actions."""
         try:
@@ -521,6 +525,7 @@ class UploadOrchestrator:
                 threshold_result=threshold_result,
                 report_url=report_url,
                 threshold_config=asdict(threshold_config) if threshold_config else None,
+                upload_error=upload_error,
             )
 
             comment_content = generator.generate()

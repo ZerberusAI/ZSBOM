@@ -52,6 +52,7 @@ class PRCommentGenerator:
         threshold_result: Optional[ThresholdResult],
         report_url: str,
         threshold_config: Optional[Dict[str, Any]] = None,
+        upload_error: Optional[str] = None,
     ):
         """
         Initialize PR comment generator.
@@ -63,6 +64,7 @@ class PRCommentGenerator:
             threshold_result: Threshold validation result (if available)
             report_url: URL to Zerberus dashboard report
             threshold_config: The project's CVE threshold settings from the server
+            upload_error: Why the upload failed, if it did
         """
         self.validation_report_path = validation_report_path
         self.risk_report_path = risk_report_path
@@ -75,6 +77,7 @@ class PRCommentGenerator:
         self.risk_report = self._load_json(risk_report_path)
 
         self.threshold_config = threshold_config or self.scan_metadata.get("threshold_config") or {}
+        self.upload_error = upload_error
         # Older scan metadata has no flag; those runs had risk scoring on.
         self.risk_enabled = self.scan_metadata.get("statistics", {}).get("risk_assessment_enabled", True)
 
@@ -147,6 +150,10 @@ class PRCommentGenerator:
 
     def _generate_status_alert(self) -> str:
         """Generate status alert box based on scan results."""
+        # A failed upload fails the build first (exit 2 wins over exit 1).
+        if self.upload_error:
+            return f"""> [!CAUTION]
+> **Build Status: :x: UPLOAD FAILED** - {self.upload_error}"""
         if self.threshold_result and self.threshold_result.should_fail_build:
             return f"""> [!WARNING]
 > **Build Status: :x: BLOCKED** - {self._block_reason()}"""
@@ -390,7 +397,7 @@ class PRCommentGenerator:
                         stats["low"] += 1
 
         # Determine status
-        if self.threshold_result and self.threshold_result.should_fail_build:
+        if self.upload_error or (self.threshold_result and self.threshold_result.should_fail_build):
             stats["status"] = "failed"
         elif stats["critical"] > 0 or stats["total_vulnerabilities"] > 0:
             stats["status"] = "warning"

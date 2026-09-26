@@ -95,3 +95,19 @@ def test_score_block_uses_cve_wording_and_shows_the_settings(reports):
     assert "CVE severity score 60 exceeds threshold 50" in comment
     assert "| Max Score Threshold | 50 |" in comment
     assert "Exceeded By" not in comment
+
+
+def test_failed_upload_is_not_reported_as_passed(reports):
+    reason = "422 error from ack: Upload incomplete: missing required file(s): dependencies.json"
+    comment = PRCommentGenerator(
+        validation_report_path=reports(validation={"total_packages": 3, "ecosystems": {}})[0],
+        risk_report_path="missing-risk-report.json",
+        scan_metadata={"statistics": {"risk_assessment_enabled": False}},
+        threshold_result=None,
+        report_url="https://app.zerberus.ai/trace-ai/dashboard",
+        upload_error=reason,
+    ).generate()
+
+    assert "PASSED" not in comment
+    assert f"**Build Status: :x: UPLOAD FAILED** - {reason}" in comment
+    assert "**Scan Status**: :x: Failed" in comment
