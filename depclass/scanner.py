@@ -16,7 +16,7 @@ from depclass.sbom import generate, read_json_file
 from depclass.validate import validate
 from depclass.metadata import MetadataCollector
 from depclass.rich_utils.ui_helpers import get_console
-from depclass.config_manager import ConfigManager
+from depclass.config_manager import ConfigManager, risk_assessment_enabled
 from depclass.threshold_checker import ThresholdChecker, ThresholdConfig
 
 
@@ -44,7 +44,7 @@ class ScannerService:
             config = self.config_manager.discover_and_load_config(config_path)
             config = self.config_manager.merge_config_and_args(config, output, ignore_conflicts)
             
-            risk_enabled = config.get("risk_assessment", {}).get("enabled", False)
+            risk_enabled = risk_assessment_enabled(config)
 
             # Initialize metadata collection
             metadata_collector = MetadataCollector(config, self.console)
@@ -290,7 +290,7 @@ class ScannerService:
             with open(risk_file, "w") as fp:
                 json.dump(scores, fp, indent=4)
             metadata_collector.add_generated_file(risk_file)
-            if config.get("risk_assessment", {}).get("enabled", False):
+            if risk_assessment_enabled(config):
                 self.console.print(f"✅ Risk assessment completed. Results saved in `{risk_file}`.")
         except Exception as e:
             metadata_collector.add_error("output_generation", e)

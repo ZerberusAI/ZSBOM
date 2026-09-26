@@ -12,6 +12,18 @@ except ImportError:
     importlib_resources = None
 
 
+def risk_assessment_enabled(config: dict) -> bool:
+    """Whether package risk scoring runs. Off unless explicitly enabled.
+
+    Accepts the documented `risk_assessment: {enabled: true}` form, and also
+    a bare boolean or an empty key, which user configs plausibly contain.
+    """
+    section = config.get("risk_assessment")
+    if isinstance(section, dict):
+        return bool(section.get("enabled", False))
+    return section is True
+
+
 class ConfigManager:
     """Simplified configuration manager."""
     

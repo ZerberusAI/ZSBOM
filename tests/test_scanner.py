@@ -53,3 +53,12 @@ def test_risk_assessment_can_be_turned_back_on(scan, tmp_path):
     score.assert_called_once()
     metadata = json.loads((tmp_path / "scan_metadata.json").read_text())
     assert metadata["statistics"]["risk_assessment_enabled"] is True
+
+
+@pytest.mark.parametrize("value", [False, None])
+def test_risk_setting_written_as_false_or_left_empty_does_not_crash_the_scan(scan, tmp_path, value):
+    exit_code, score = scan({"risk_assessment": value})
+
+    assert exit_code == 0
+    score.assert_not_called()
+    assert json.loads((tmp_path / "risk_report.json").read_text()) == []

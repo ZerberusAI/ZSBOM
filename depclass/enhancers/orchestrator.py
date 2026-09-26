@@ -16,6 +16,7 @@ from .deps_dev_provider import DepsDevProvider
 from .osv_provider import OSVProvider
 from .github_provider import GitHubProvider
 from .formatters import PackageKeyFormatter
+from ..config_manager import risk_assessment_enabled
 from ..db.vulnerability import VulnerabilityCache
 
 
@@ -47,7 +48,7 @@ class EnhancerOrchestrator:
         self.vulnerability_provider = OSVProvider(config, cache)
         # GitHub repository data only feeds the risk score (package
         # abandonment), so skip its API calls while risk assessment is off.
-        self.risk_enabled = config.get("risk_assessment", {}).get("enabled", False)
+        self.risk_enabled = risk_assessment_enabled(config)
         self.repository_provider = GitHubProvider(config, cache) if self.risk_enabled else None
 
         # Progress display

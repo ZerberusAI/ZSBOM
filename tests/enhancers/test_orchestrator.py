@@ -59,3 +59,10 @@ def test_risk_on_still_runs_the_github_lookup():
 
     github.assert_called_once()
     assert package["repository"]["source"] == "github"
+
+
+def test_risk_setting_written_as_false_or_left_empty_counts_as_off():
+    for value in (False, None):
+        _, github = _run({"risk_assessment": value})
+
+        github.assert_not_called()
