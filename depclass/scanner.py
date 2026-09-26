@@ -290,7 +290,8 @@ class ScannerService:
             with open(risk_file, "w") as fp:
                 json.dump(scores, fp, indent=4)
             metadata_collector.add_generated_file(risk_file)
-            self.console.print(f"✅ Risk assessment completed. Results saved in `{risk_file}`.")
+            if config.get("risk_assessment", {}).get("enabled", False):
+                self.console.print(f"✅ Risk assessment completed. Results saved in `{risk_file}`.")
         except Exception as e:
             metadata_collector.add_error("output_generation", e)
         

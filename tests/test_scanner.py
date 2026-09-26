@@ -35,7 +35,7 @@ def scan(tmp_path, monkeypatch):
     return run
 
 
-def test_risk_assessment_is_off_by_default(scan, tmp_path):
+def test_risk_assessment_is_off_by_default(scan, tmp_path, capsys):
     exit_code, score = scan()
 
     assert exit_code == 0
@@ -43,6 +43,7 @@ def test_risk_assessment_is_off_by_default(scan, tmp_path):
     assert json.loads((tmp_path / "risk_report.json").read_text()) == []
     metadata = json.loads((tmp_path / "scan_metadata.json").read_text())
     assert metadata["statistics"]["risk_assessment_enabled"] is False
+    assert "Risk assessment completed" not in capsys.readouterr().out
 
 
 def test_risk_assessment_can_be_turned_back_on(scan, tmp_path):
