@@ -36,7 +36,7 @@ ZSBOM helps developers, security teams, and DevOps engineers stay ahead of these
 
 - **Multi-Ecosystem Scanning** — Python, JavaScript/NPM, and Java (Maven & Gradle) with full transitive dependency resolution
 - **Security Validation** — CVE detection via [OSV.dev](https://osv.dev/), CWE weakness mapping, abandoned package detection, and typosquatting analysis
-- **Risk Scoring** — 5-factor scoring framework with configurable weights and thresholds
+- **Risk Scoring** — 5-factor scoring framework with configurable weights and thresholds (off by default while it is redesigned)
 - **CycloneDX v1.6 SBOM** — Industry-standard output with embedded vulnerability data
 - **Single Command** — Auto-detects ecosystems and runs the full pipeline
 
@@ -75,7 +75,7 @@ zsbom scan
 1. **Detect** — Auto-discovers project ecosystems by scanning for manifest and lock files
 2. **Extract** — Resolves the full dependency tree, including transitive dependencies
 3. **Validate** — Checks every package against CVE databases (OSV.dev, including the CWE IDs on each advisory) and heuristic checks
-4. **Score** — Calculates a per-package risk score across five weighted dimensions
+4. **Score** — Calculates a per-package risk score across five weighted dimensions (only when `risk_assessment.enabled` is true)
 5. **Generate** — Produces a CycloneDX v1.6 SBOM with embedded vulnerability and risk data
 
 ## Output
@@ -85,7 +85,7 @@ ZSBOM generates the following files in your project root:
 | File | Description |
 |------|-------------|
 | `sbom.json` | CycloneDX v1.6 SBOM with components and vulnerabilities |
-| `risk_report.json` | Per-dependency risk scores across all dimensions |
+| `risk_report.json` | Per-dependency risk scores across all dimensions (an empty list while risk scoring is off) |
 | `dependencies.json` | Full dependency tree with ecosystem and classification metadata |
 | `validation_report.json` | CVE and CWE findings from security validation |
 | `scan_metadata.json` | Scan context — timestamps, configuration, statistics |
@@ -107,13 +107,15 @@ ZSBOM generates the following files in your project root:
 
 ## Risk Scoring
 
+> Risk scoring is **off by default** (`risk_assessment.enabled: false`) while it is redesigned. When off, no GitHub API calls are made and `risk_report.json` is an empty list. The pipeline gate is unaffected: it is based on CVE severity.
+
 ZSBOM scores every dependency on a 0–100 scale using the **ZSBOM Risk Scoring Framework v1.0**:
 
 | Dimension | Weight | What It Measures |
 |-----------|:------:|------------------|
 | Known CVEs | 30% | Active vulnerabilities from OSV.dev |
 | Package Abandonment | 20% | Maintenance status and commit activity |
-| CWE Coverage | 20% | Weakness patterns from MITRE |
+| CWE Coverage | 20% | CWE IDs on the package's advisories |
 | Typosquatting Risk | 15% | Name similarity to popular packages |
 | Version Mismatch | 15% | Declared vs. installed version drift |
 

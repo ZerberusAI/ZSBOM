@@ -45,7 +45,10 @@ class EnhancerOrchestrator:
         # Initialize providers directly
         self.metadata_provider = DepsDevProvider(config, cache)
         self.vulnerability_provider = OSVProvider(config, cache)
-        self.repository_provider = GitHubProvider(config, cache)
+        # GitHub repository data only feeds the risk score (package
+        # abandonment), so skip its API calls while risk assessment is off.
+        self.risk_enabled = config.get("risk_assessment", {}).get("enabled", False)
+        self.repository_provider = GitHubProvider(config, cache) if self.risk_enabled else None
 
         # Progress display
         self.console = Console()
@@ -157,19 +160,16 @@ class EnhancerOrchestrator:
         self.stats["total_packages"] += len(packages)
         ecosystem_data = {}
 
-        # Context for passing data between providers
-        context = {
-            "metadata": {},
-            "vulnerability": {},
-            "repository": {}
-        }
-
         # Sequential processing with progress display
         providers = [
             ("metadata", self.metadata_provider, "Fetching package metadata"),
             ("vulnerability", self.vulnerability_provider, "Scanning for vulnerabilities"),
-            ("repository", self.repository_provider, "Analyzing repository activity"),
         ]
+        if self.repository_provider:
+            providers.append(("repository", self.repository_provider, "Analyzing repository activity"))
+
+        # Context for passing data between providers
+        context = {phase_name: {} for phase_name, _, _ in providers}
 
         with Progress(
             SpinnerColumn(),
@@ -220,7 +220,7 @@ class EnhancerOrchestrator:
 
             # Add data from each provider
             has_enhancement = False
-            for phase_name in ["metadata", "vulnerability", "repository"]:
+            for phase_name in context:
                 phase_data = context[phase_name].get(package, {})
                 if phase_data.get("enhanced", False):
                     has_enhancement = True
@@ -282,8 +282,5 @@ class EnhancerOrchestrator:
 
     def _get_total_cache_hits(self) -> int:
         """Calculate total cache hits across all providers."""
-        return (
-            self.metadata_provider.stats.get("cache_hits", 0) +
-            self.vulnerability_provider.stats.get("cache_hits", 0) +
-            self.repository_provider.stats.get("cache_hits", 0)
-        )
+        providers = [self.metadata_provider, self.vulnerability_provider, self.repository_provider]
+        return sum(provider.stats.get("cache_hits", 0) for provider in providers if provider)

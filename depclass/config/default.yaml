@@ -94,6 +94,12 @@ output:
   sbom_file: "sbom.json"
   risk_file: "risk_report.json"
   dependencies_file: "dependencies.json"
+# Package risk scoring is off while it is redesigned. When off, the GitHub
+# repository lookup is skipped too (no GitHub API calls) and risk_report.json
+# is written as an empty list. CVE checks and the CVE threshold are unaffected.
+risk_assessment:
+  enabled: false
+
 # Risk scoring weights (ZSBOM Risk Scoring Framework v1.0)
 risk_model:
   weights:

@@ -44,9 +44,13 @@ class ScannerService:
             config = self.config_manager.discover_and_load_config(config_path)
             config = self.config_manager.merge_config_and_args(config, output, ignore_conflicts)
             
+            risk_enabled = config.get("risk_assessment", {}).get("enabled", False)
+
             # Initialize metadata collection
             metadata_collector = MetadataCollector(config, self.console)
             scan_id = metadata_collector.start_collection()
+            # The upload's PR comment reads this to decide whether to show risk.
+            metadata_collector.update_statistics({"risk_assessment_enabled": risk_enabled})
             
             # Initialize cache if enabled
             cache = None
@@ -123,16 +127,19 @@ class ScannerService:
                 # Store threshold results for data-prefect-flow processing
                 metadata_collector.set_threshold_failure(threshold_result)
             
-            # Assess risk
-            try:
-                print("\n🎯 Running risk assessment...")
-                scores = self.assess_risk(config, results, dependency_data, dependencies_analysis)
-            except Exception as e:
-                metadata_collector.add_error("risk_assessment", e)
-                scores = []
-            
-            # Display risk results
-            self._display_risk_results(scores, dependencies_analysis)
+            # Risk scoring is off by default until it is redesigned. The empty
+            # risk_report.json still gets written, because processing expects it.
+            scores = []
+            if risk_enabled:
+                try:
+                    print("\n🎯 Running risk assessment...")
+                    scores = self.assess_risk(config, results, dependency_data, dependencies_analysis)
+                except Exception as e:
+                    metadata_collector.add_error("risk_assessment", e)
+                    scores = []
+                self._display_risk_results(scores, dependencies_analysis)
+            else:
+                self.console.print("\nℹ️  Risk assessment disabled", style="dim")
             
             # Save results
             self._save_results(config, results, scores, dependencies_analysis, metadata_collector)
