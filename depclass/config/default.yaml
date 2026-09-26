@@ -3,7 +3,6 @@ validation_rules:
   enable_abandoned_check: true
   enable_typosquatting_check: true
   enable_version_check: true
-  enable_mitre_check: true  # New: Check for MITRE Python weaknesses
 
 # Transitive dependency analysis configuration
 transitive_analysis:
@@ -87,10 +86,7 @@ sources:
       enabled: true
       url: "https://api.osv.dev/v1"
   cwe:
-    mitre_weaknesses: 
-      enabled: true
-      url: "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip"  # New: MITRE Python CWE list
-    nvd_weaknesses: # Fallback to MITRE CWE
+    nvd_weaknesses: # Fallback CWE source
       url: "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 output:

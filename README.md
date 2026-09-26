@@ -74,7 +74,7 @@ zsbom scan
 
 1. **Detect** — Auto-discovers project ecosystems by scanning for manifest and lock files
 2. **Extract** — Resolves the full dependency tree, including transitive dependencies
-3. **Validate** — Checks every package against CVE databases (OSV.dev), CWE mappings (MITRE), and heuristic checks
+3. **Validate** — Checks every package against CVE databases (OSV.dev, including the CWE IDs on each advisory) and heuristic checks
 4. **Score** — Calculates a per-package risk score across five weighted dimensions
 5. **Generate** — Produces a CycloneDX v1.6 SBOM with embedded vulnerability and risk data
 

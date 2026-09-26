@@ -15,7 +15,6 @@ from rich.console import Console
 from .deps_dev_provider import DepsDevProvider
 from .osv_provider import OSVProvider
 from .github_provider import GitHubProvider
-from .mitre_provider import MITREProvider
 from .formatters import PackageKeyFormatter
 from ..db.vulnerability import VulnerabilityCache
 
@@ -25,7 +24,7 @@ class EnhancerOrchestrator:
     Simplified package-centric enhancer orchestration.
 
     Features:
-    - Sequential processing: metadata → vulnerability → repository → weakness
+    - Sequential processing: metadata → vulnerability → repository
     - Context-based communication between providers
     - No complex inheritance or registry patterns
     - Each provider optimizes internally (batch vs individual)
@@ -47,7 +46,6 @@ class EnhancerOrchestrator:
         self.metadata_provider = DepsDevProvider(config, cache)
         self.vulnerability_provider = OSVProvider(config, cache)
         self.repository_provider = GitHubProvider(config, cache)
-        self.weakness_provider = MITREProvider(config, cache)
 
         # Progress display
         self.console = Console()
@@ -163,8 +161,7 @@ class EnhancerOrchestrator:
         context = {
             "metadata": {},
             "vulnerability": {},
-            "repository": {},
-            "weakness": {}
+            "repository": {}
         }
 
         # Sequential processing with progress display
@@ -172,7 +169,6 @@ class EnhancerOrchestrator:
             ("metadata", self.metadata_provider, "Fetching package metadata"),
             ("vulnerability", self.vulnerability_provider, "Scanning for vulnerabilities"),
             ("repository", self.repository_provider, "Analyzing repository activity"),
-            ("weakness", self.weakness_provider, "Mapping weakness data")
         ]
 
         with Progress(
@@ -224,7 +220,7 @@ class EnhancerOrchestrator:
 
             # Add data from each provider
             has_enhancement = False
-            for phase_name in ["metadata", "vulnerability", "repository", "weakness"]:
+            for phase_name in ["metadata", "vulnerability", "repository"]:
                 phase_data = context[phase_name].get(package, {})
                 if phase_data.get("enhanced", False):
                     has_enhancement = True
@@ -289,6 +285,5 @@ class EnhancerOrchestrator:
         return (
             self.metadata_provider.stats.get("cache_hits", 0) +
             self.vulnerability_provider.stats.get("cache_hits", 0) +
-            self.repository_provider.stats.get("cache_hits", 0) +
-            self.weakness_provider.stats.get("cache_hits", 0)
+            self.repository_provider.stats.get("cache_hits", 0)
         )
