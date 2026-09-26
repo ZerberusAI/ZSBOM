@@ -5,6 +5,7 @@ Handles all API interactions with the Zerberus server following the 3-phase
 upload workflow: initiate, upload URLs, and completion acknowledgment.
 """
 
+import json
 import os
 import time
 import asyncio
@@ -39,6 +40,26 @@ from .exceptions import (
 ZERBERUS_SERVER_VERSION="v1"
 
 
+def _server_message(response: requests.Response) -> str:
+    """The reason the server gave for an error response, as readable text."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        for key in ("detail", "message"):
+            value = body.get(key)
+            if value:
+                return value if isinstance(value, str) else json.dumps(value)
+    return (response.text or "").strip()[:500] or (response.reason or "")
+
+
+def _is_refused_request(error: Exception) -> bool:
+    """A 4xx (other than 429) won't succeed on retry, so give up at once."""
+    status_code = getattr(error, "status_code", None)
+    return status_code is not None and 400 <= status_code < 500 and status_code != 429
+
+
 class ZerberusAPIClient:
     """Handles all API interactions with Zerberus server"""
     
@@ -62,7 +83,8 @@ class ZerberusAPIClient:
         (requests.exceptions.RequestException, APIConnectionError),
         max_tries=3,
         base=1,
-        max_value=60
+        max_value=60,
+        giveup=_is_refused_request,
     )
     def initiate_scan(self, request: ScanInitiationRequest) -> ScanInitiationResponse:
         """POST /meta/api/v1/trace-ai/scans/initiate"""
@@ -125,7 +147,8 @@ class ZerberusAPIClient:
         (requests.exceptions.RequestException, APIConnectionError),
         max_tries=3,
         base=1,
-        max_value=60
+        max_value=60,
+        giveup=_is_refused_request,
     )
     def get_upload_urls(self, scan_id: str, files: List[str]) -> UploadUrlsResponse:
         """POST /meta/api/v1/trace-ai/scans/{scan_id}/upload-urls"""
@@ -163,7 +186,8 @@ class ZerberusAPIClient:
         (requests.exceptions.RequestException, APIConnectionError),
         max_tries=3,
         base=1,
-        max_value=60
+        max_value=60,
+        giveup=_is_refused_request,
     )
     def acknowledge_completion(self, scan_id: str, request: CompletionRequest) -> CompletionResponse:
         """POST /meta/api/v1/trace-ai/scans/{scan_id}/acknowledge-upload"""
@@ -288,39 +312,29 @@ class ZerberusAPIClient:
         return processed_results
     
     def _handle_response_errors(self, response: requests.Response, endpoint: str):
-        """Handle common API response errors"""
-        if response.status_code == 401:
+        """Raise with the server's own reason for any error response."""
+        if response.status_code < 400:
+            return
+
+        status_code = response.status_code
+        reason = _server_message(response)
+
+        if status_code == 401:
             raise AuthenticationError(
-                "Invalid Zerberus license key. Please check ZERBERUS_LICENSE_KEY"
+                f"401 Unauthorized: {reason}. Check ZERBERUS_LICENSE_KEY",
+                status_code=status_code,
+                endpoint=endpoint,
             )
-        elif response.status_code == 403:
+        if status_code == 403:
             raise AuthenticationError(
-                "Access forbidden. Your license key may not have permission for this project"
+                f"403 Forbidden: {reason} (your license key may not have permission for this project)",
+                status_code=status_code,
+                endpoint=endpoint,
             )
-        elif response.status_code == 404:
-            raise APIConnectionError(
-                f"API endpoint not found: {endpoint}",
-                status_code=response.status_code,
-                endpoint=endpoint
-            )
-        elif response.status_code == 409:
-            error_msg = "Conflict error"
-            try:
-                error_data = response.json()
-                error_msg = error_data.get("message", error_msg)
-            except:
-                pass
-            raise ScanStateError(error_msg)
-        elif response.status_code >= 400:
-            error_msg = f"API error {response.status_code}"
-            try:
-                error_data = response.json()
-                error_msg = error_data.get("message", error_msg)
-            except:
-                error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
-            
-            raise APIConnectionError(
-                error_msg,
-                status_code=response.status_code,
-                endpoint=endpoint
-            )
+        if status_code == 409:
+            raise ScanStateError(f"409 Conflict: {reason}")
+        raise APIConnectionError(
+            f"{status_code} error from {endpoint}: {reason}",
+            status_code=status_code,
+            endpoint=endpoint,
+        )
