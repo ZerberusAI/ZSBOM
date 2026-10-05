@@ -62,3 +62,19 @@ def test_risk_setting_written_as_false_or_left_empty_does_not_crash_the_scan(sca
     assert exit_code == 0
     score.assert_not_called()
     assert json.loads((tmp_path / "risk_report.json").read_text()) == []
+
+
+def test_an_unavailable_extractor_fails_the_scan_instead_of_unsupported(tmp_path, monkeypatch, capsys):
+    # The workflow treats unsupported_repo as "skipped, green" and a non-zero
+    # exit as a failed scan, so this must be the latter.
+    from depclass.extractors.scalibr.wrapper import ScalibrUnavailableError
+
+    monkeypatch.chdir(tmp_path)
+    error = ScalibrUnavailableError("ZSBOM couldn't build its dependency extractor (Scalibr)")
+    with patch("depclass.scanner.extract", side_effect=error):
+        exit_code, _ = ScannerService().execute_scan()
+
+    assert exit_code != 0
+    assert "couldn't build its dependency extractor" in capsys.readouterr().out
+    metadata = json.loads((tmp_path / "scan_metadata.json").read_text())
+    assert not metadata.get("statistics", {}).get("unsupported_repo")
