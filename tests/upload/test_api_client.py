@@ -6,13 +6,19 @@ retry a request the server has already refused.
 """
 
 import json
-from datetime import datetime
+import types
+from datetime import datetime, timedelta
 from unittest.mock import Mock
 
+import backoff._sync
 import pytest
 import requests
 
-from depclass.upload.api_client import ZerberusAPIClient
+from depclass.upload.api_client import (
+    RETRY_BUDGET_SECONDS,
+    RETRY_MAX_WAIT_SECONDS,
+    ZerberusAPIClient,
+)
 from depclass.upload.exceptions import APIConnectionError, AuthenticationError
 from depclass.upload.models import (
     CompletionRequest,
@@ -104,8 +110,87 @@ def test_rejected_acknowledge_is_not_retried(client):
     assert client.session.post.call_count == 1
 
 
-def test_server_errors_are_still_retried(client):
-    client.session.post = Mock(return_value=_response(503, {"message": "Service Unavailable"}))
+class _Clock:
+    """Fake time for the retries: sleeping moves the clock on."""
+
+    def __init__(self):
+        self.now = datetime(2026, 10, 8, 10, 42, 0)
+        self.sleeps = []
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += timedelta(seconds=seconds)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    # backoff measures its time budget with datetime.datetime.now().
+    fake_datetime = types.SimpleNamespace(
+        datetime=types.SimpleNamespace(now=lambda: clock.now)
+    )
+    monkeypatch.setattr(backoff._sync, "datetime", fake_datetime)
+    return clock
+
+
+UNAVAILABLE = {"message": "Service Unavailable"}
+ACKNOWLEDGED = {
+    "scan_id": "scan-1",
+    "status": "completed",
+    "report_url": "https://app.test/r",
+    "message": "ok",
+    "processing_status": "queued",
+    "estimated_processing_time": "1m",
+}
+
+
+def test_a_short_outage_is_ridden_out(client, clock):
+    # 2026-10-08: meta-guard returned 503 for a while and the old retries
+    # gave up after about a second, failing the customer's build.
+    client.session.post = Mock(
+        side_effect=[
+            _response(503, UNAVAILABLE),
+            _response(503, UNAVAILABLE),
+            _response(200, ACKNOWLEDGED),
+        ]
+    )
+    result = client.acknowledge_completion("scan-1", _completion())
+    assert result.status == "completed"
+    assert client.session.post.call_count == 3
+    assert 2 <= clock.sleeps[0] < 3
+    assert 4 <= clock.sleeps[1] < 5
+
+
+def test_waits_grow_and_never_exceed_30_seconds(client, clock):
+    client.session.post = Mock(return_value=_response(503, UNAVAILABLE))
     with pytest.raises(APIConnectionError):
         client.acknowledge_completion("scan-1", _completion())
-    assert client.session.post.call_count == 3
+    for wait, low in zip(clock.sleeps, (2, 4, 8, 16, 30)):
+        assert low <= wait < low + 1
+    assert all(wait <= RETRY_MAX_WAIT_SECONDS + 1 for wait in clock.sleeps)
+
+
+def test_retrying_stops_at_the_90_second_budget(client, clock):
+    client.session.post = Mock(return_value=_response(503, UNAVAILABLE))
+    with pytest.raises(APIConnectionError):
+        client.acknowledge_completion("scan-1", _completion())
+    assert sum(clock.sleeps) == pytest.approx(RETRY_BUDGET_SECONDS)
+    assert client.session.post.call_count == len(clock.sleeps) + 1
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.initiate_scan(Mock()),
+        lambda c: c.get_upload_urls("scan-1", ["dependencies.json"]),
+        lambda c: c.acknowledge_completion("scan-1", _completion()),
+    ],
+    ids=["initiate_scan", "get_upload_urls", "acknowledge_completion"],
+)
+def test_every_api_call_uses_the_same_retries(client, clock, call):
+    client.session.post = Mock(return_value=_response(503, UNAVAILABLE))
+    with pytest.raises(APIConnectionError):
+        call(client)
+    assert 2 <= clock.sleeps[0] < 3
+    assert sum(clock.sleeps) == pytest.approx(RETRY_BUDGET_SECONDS)

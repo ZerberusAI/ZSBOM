@@ -60,6 +60,23 @@ def _is_refused_request(error: Exception) -> bool:
     return status_code is not None and 400 <= status_code < 500 and status_code != 429
 
 
+# A restart or deploy of the Zerberus API can answer 503 for a while, so wait
+# 2, 4, 8, 16, then 30 seconds (plus up to a second of jitter) and keep trying
+# for up to 90 seconds in total. A refused request is never retried.
+RETRY_BUDGET_SECONDS = 90
+RETRY_MAX_WAIT_SECONDS = 30
+
+_retry_api_call = backoff.on_exception(
+    backoff.expo,
+    (requests.exceptions.RequestException, APIConnectionError),
+    max_time=RETRY_BUDGET_SECONDS,
+    factor=2,
+    max_value=RETRY_MAX_WAIT_SECONDS,
+    jitter=backoff.random_jitter,
+    giveup=_is_refused_request,
+)
+
+
 class ZerberusAPIClient:
     """Handles all API interactions with Zerberus server"""
     
@@ -78,14 +95,7 @@ class ZerberusAPIClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.session.close()
     
-    @backoff.on_exception(
-        backoff.expo,
-        (requests.exceptions.RequestException, APIConnectionError),
-        max_tries=3,
-        base=1,
-        max_value=60,
-        giveup=_is_refused_request,
-    )
+    @_retry_api_call
     def initiate_scan(self, request: ScanInitiationRequest) -> ScanInitiationResponse:
         """POST /meta/api/v1/trace-ai/scans/initiate"""
         endpoint = f"meta/api/{self.version}/trace-ai/scans/initiate"
@@ -142,14 +152,7 @@ class ZerberusAPIClient:
         except requests.exceptions.RequestException as e:
             raise APIConnectionError(f"Failed to initiate scan: {str(e)}", endpoint=endpoint)
     
-    @backoff.on_exception(
-        backoff.expo,
-        (requests.exceptions.RequestException, APIConnectionError),
-        max_tries=3,
-        base=1,
-        max_value=60,
-        giveup=_is_refused_request,
-    )
+    @_retry_api_call
     def get_upload_urls(self, scan_id: str, files: List[str]) -> UploadUrlsResponse:
         """POST /meta/api/v1/trace-ai/scans/{scan_id}/upload-urls"""
         endpoint = f"meta/api/{self.version}/trace-ai/scans/{scan_id}/upload-urls"
@@ -181,14 +184,7 @@ class ZerberusAPIClient:
         except requests.exceptions.RequestException as e:
             raise APIConnectionError(f"Failed to get upload URLs: {str(e)}", endpoint=endpoint)
     
-    @backoff.on_exception(
-        backoff.expo,
-        (requests.exceptions.RequestException, APIConnectionError),
-        max_tries=3,
-        base=1,
-        max_value=60,
-        giveup=_is_refused_request,
-    )
+    @_retry_api_call
     def acknowledge_completion(self, scan_id: str, request: CompletionRequest) -> CompletionResponse:
         """POST /meta/api/v1/trace-ai/scans/{scan_id}/acknowledge-upload"""
         endpoint = f"meta/api/{self.version}/trace-ai/scans/{scan_id}/acknowledge-upload"
