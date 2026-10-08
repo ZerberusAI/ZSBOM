@@ -102,7 +102,7 @@ class ThresholdChecker:
             failure_reason = f"Critical vulnerabilities found: {vuln_counts.critical}"
         elif score_exceeded:
             should_fail = True
-            failure_reason = f"Vulnerability score {calculated_score} exceeds threshold {self.config.max_score_threshold}"
+            failure_reason = f"CVE severity score {calculated_score} exceeds threshold {self.config.max_score_threshold}"
             
         self.logger.info(
             f"Threshold check result: score={calculated_score}, threshold={self.config.max_score_threshold}, "

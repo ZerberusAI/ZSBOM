@@ -16,7 +16,7 @@ from depclass.sbom import generate, read_json_file
 from depclass.validate import validate
 from depclass.metadata import MetadataCollector
 from depclass.rich_utils.ui_helpers import get_console
-from depclass.config_manager import ConfigManager
+from depclass.config_manager import ConfigManager, risk_assessment_enabled
 from depclass.threshold_checker import ThresholdChecker, ThresholdConfig
 
 
@@ -44,9 +44,13 @@ class ScannerService:
             config = self.config_manager.discover_and_load_config(config_path)
             config = self.config_manager.merge_config_and_args(config, output, ignore_conflicts)
             
+            risk_enabled = risk_assessment_enabled(config)
+
             # Initialize metadata collection
             metadata_collector = MetadataCollector(config, self.console)
             scan_id = metadata_collector.start_collection()
+            # The upload's PR comment reads this to decide whether to show risk.
+            metadata_collector.update_statistics({"risk_assessment_enabled": risk_enabled})
             
             # Initialize cache if enabled
             cache = None
@@ -123,16 +127,19 @@ class ScannerService:
                 # Store threshold results for data-prefect-flow processing
                 metadata_collector.set_threshold_failure(threshold_result)
             
-            # Assess risk
-            try:
-                print("\n🎯 Running risk assessment...")
-                scores = self.assess_risk(config, results, dependency_data, dependencies_analysis)
-            except Exception as e:
-                metadata_collector.add_error("risk_assessment", e)
-                scores = []
-            
-            # Display risk results
-            self._display_risk_results(scores, dependencies_analysis)
+            # Risk scoring is off by default until it is redesigned. The empty
+            # risk_report.json still gets written, because processing expects it.
+            scores = []
+            if risk_enabled:
+                try:
+                    print("\n🎯 Running risk assessment...")
+                    scores = self.assess_risk(config, results, dependency_data, dependencies_analysis)
+                except Exception as e:
+                    metadata_collector.add_error("risk_assessment", e)
+                    scores = []
+                self._display_risk_results(scores, dependencies_analysis)
+            else:
+                self.console.print("\nℹ️  Risk assessment disabled", style="dim")
             
             # Save results
             self._save_results(config, results, scores, dependencies_analysis, metadata_collector)
@@ -283,7 +290,8 @@ class ScannerService:
             with open(risk_file, "w") as fp:
                 json.dump(scores, fp, indent=4)
             metadata_collector.add_generated_file(risk_file)
-            self.console.print(f"✅ Risk assessment completed. Results saved in `{risk_file}`.")
+            if risk_assessment_enabled(config):
+                self.console.print(f"✅ Risk assessment completed. Results saved in `{risk_file}`.")
         except Exception as e:
             metadata_collector.add_error("output_generation", e)
         

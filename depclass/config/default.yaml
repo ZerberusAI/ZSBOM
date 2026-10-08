@@ -3,7 +3,6 @@ validation_rules:
   enable_abandoned_check: true
   enable_typosquatting_check: true
   enable_version_check: true
-  enable_mitre_check: true  # New: Check for MITRE Python weaknesses
 
 # Transitive dependency analysis configuration
 transitive_analysis:
@@ -87,10 +86,7 @@ sources:
       enabled: true
       url: "https://api.osv.dev/v1"
   cwe:
-    mitre_weaknesses: 
-      enabled: true
-      url: "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip"  # New: MITRE Python CWE list
-    nvd_weaknesses: # Fallback to MITRE CWE
+    nvd_weaknesses: # Fallback CWE source
       url: "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 output:
@@ -98,6 +94,12 @@ output:
   sbom_file: "sbom.json"
   risk_file: "risk_report.json"
   dependencies_file: "dependencies.json"
+# Package risk scoring is off while it is redesigned. When off, the GitHub
+# repository lookup is skipped too (no GitHub API calls) and risk_report.json
+# is written as an empty list. CVE checks and the CVE threshold are unaffected.
+risk_assessment:
+  enabled: false
+
 # Risk scoring weights (ZSBOM Risk Scoring Framework v1.0)
 risk_model:
   weights:

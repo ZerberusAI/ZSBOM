@@ -169,6 +169,8 @@ class ThresholdResult:
     calculated_score: int
     max_threshold: int
     failure_reason: Optional[str] = None
+    critical_vulnerabilities_found: bool = False
+    critical_count: int = 0
 
 
 @dataclass
