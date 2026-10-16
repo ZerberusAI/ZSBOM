@@ -15,6 +15,14 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 
+class ScalibrUnavailableError(FileNotFoundError):
+    """The Scalibr library couldn't be loaded or built.
+
+    JavaScript and Java dependencies can't be scanned without it, so this is
+    a scan failure, never "no supported ecosystems".
+    """
+
+
 def get_platform_library_name() -> str:
     """Get the expected library filename for current platform."""
     system = platform.system().lower()
@@ -79,10 +87,12 @@ def try_build_library(build_dir: Path) -> bool:
             else:
                 # Build failed - show the error messages
                 print("❌ Build script failed:")
+                # The compiler's error comes last, after the module
+                # downloads, so show the end of the output.
                 if result.stdout:
-                    print("   stdout:", result.stdout[:500])  # First 500 chars
+                    print("   stdout:", result.stdout[-3000:])
                 if result.stderr:
-                    print("   stderr:", result.stderr[:500])  # First 500 chars
+                    print("   stderr:", result.stderr[-3000:])
                 return False
         else:
             print(f"⚠️  Build script not found at {build_script}")
@@ -139,12 +149,15 @@ def load_scalibr_library():
                         print(f"⚠️  Failed to load newly built library {lib_path}: {e}")
                         continue
             else:
-                raise FileNotFoundError(
+                raise ScalibrUnavailableError(
                     f"Failed to build or load Scalibr library. Tried: {[str(p) for p in library_candidates]}"
                 )
         else:
             # Build failed, provide helpful error message
             error_msg = (
+                f"ZSBOM couldn't build its dependency extractor (Scalibr), so "
+                f"JavaScript and Java dependencies can't be scanned. See the "
+                f"build output above.\n"
                 f"Scalibr library not found and build failed.\n"
                 f"Searched for: {[str(p) for p in library_candidates]}\n"
                 f"To resolve this issue:\n"
@@ -152,7 +165,7 @@ def load_scalibr_library():
                 f"2. Run: cd {build_dir} && make\n"
                 f"3. Or manually build: go build -buildmode=c-shared -o {get_platform_library_name()} scalibr_wrapper.go"
             )
-            raise FileNotFoundError(error_msg)
+            raise ScalibrUnavailableError(error_msg)
 
     # Define function signatures
 

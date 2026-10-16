@@ -15,8 +15,8 @@ from rich.console import Console
 from .deps_dev_provider import DepsDevProvider
 from .osv_provider import OSVProvider
 from .github_provider import GitHubProvider
-from .mitre_provider import MITREProvider
 from .formatters import PackageKeyFormatter
+from ..config_manager import risk_assessment_enabled
 from ..db.vulnerability import VulnerabilityCache
 
 
@@ -25,7 +25,7 @@ class EnhancerOrchestrator:
     Simplified package-centric enhancer orchestration.
 
     Features:
-    - Sequential processing: metadata → vulnerability → repository → weakness
+    - Sequential processing: metadata → vulnerability → repository
     - Context-based communication between providers
     - No complex inheritance or registry patterns
     - Each provider optimizes internally (batch vs individual)
@@ -46,8 +46,10 @@ class EnhancerOrchestrator:
         # Initialize providers directly
         self.metadata_provider = DepsDevProvider(config, cache)
         self.vulnerability_provider = OSVProvider(config, cache)
-        self.repository_provider = GitHubProvider(config, cache)
-        self.weakness_provider = MITREProvider(config, cache)
+        # GitHub repository data only feeds the risk score (package
+        # abandonment), so skip its API calls while risk assessment is off.
+        self.risk_enabled = risk_assessment_enabled(config)
+        self.repository_provider = GitHubProvider(config, cache) if self.risk_enabled else None
 
         # Progress display
         self.console = Console()
@@ -159,21 +161,16 @@ class EnhancerOrchestrator:
         self.stats["total_packages"] += len(packages)
         ecosystem_data = {}
 
-        # Context for passing data between providers
-        context = {
-            "metadata": {},
-            "vulnerability": {},
-            "repository": {},
-            "weakness": {}
-        }
-
         # Sequential processing with progress display
         providers = [
             ("metadata", self.metadata_provider, "Fetching package metadata"),
             ("vulnerability", self.vulnerability_provider, "Scanning for vulnerabilities"),
-            ("repository", self.repository_provider, "Analyzing repository activity"),
-            ("weakness", self.weakness_provider, "Mapping weakness data")
         ]
+        if self.repository_provider:
+            providers.append(("repository", self.repository_provider, "Analyzing repository activity"))
+
+        # Context for passing data between providers
+        context = {phase_name: {} for phase_name, _, _ in providers}
 
         with Progress(
             SpinnerColumn(),
@@ -224,7 +221,7 @@ class EnhancerOrchestrator:
 
             # Add data from each provider
             has_enhancement = False
-            for phase_name in ["metadata", "vulnerability", "repository", "weakness"]:
+            for phase_name in context:
                 phase_data = context[phase_name].get(package, {})
                 if phase_data.get("enhanced", False):
                     has_enhancement = True
@@ -286,9 +283,5 @@ class EnhancerOrchestrator:
 
     def _get_total_cache_hits(self) -> int:
         """Calculate total cache hits across all providers."""
-        return (
-            self.metadata_provider.stats.get("cache_hits", 0) +
-            self.vulnerability_provider.stats.get("cache_hits", 0) +
-            self.repository_provider.stats.get("cache_hits", 0) +
-            self.weakness_provider.stats.get("cache_hits", 0)
-        )
+        providers = [self.metadata_provider, self.vulnerability_provider, self.repository_provider]
+        return sum(provider.stats.get("cache_hits", 0) for provider in providers if provider)

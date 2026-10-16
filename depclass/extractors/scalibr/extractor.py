@@ -11,7 +11,7 @@ from pathlib import Path
 from rich.console import Console
 
 from ..base import BaseExtractor
-from .wrapper import ScalibrWrapper
+from .wrapper import ScalibrUnavailableError, ScalibrWrapper
 from .classifiers import get_classifier
 from ...enhancers.deps_dev_provider import DepsDevProvider
 
@@ -94,6 +94,8 @@ class ScalibrExtractor(BaseExtractor):
             # Convert Scalibr results to ecosystem-separated format
             return self._parse_scalibr_results(scalibr_result, config, cache)
 
+        except ScalibrUnavailableError:
+            raise  # a scan failure, not "no supported ecosystems"
         except Exception as e:
             print(f"⚠️ Scalibr extraction failed: {e}")
             return self._create_empty_result()

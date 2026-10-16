@@ -51,6 +51,8 @@ class PRCommentGenerator:
         scan_metadata: dict,
         threshold_result: Optional[ThresholdResult],
         report_url: str,
+        threshold_config: Optional[Dict[str, Any]] = None,
+        upload_error: Optional[str] = None,
     ):
         """
         Initialize PR comment generator.
@@ -61,6 +63,8 @@ class PRCommentGenerator:
             scan_metadata: Scan metadata dictionary
             threshold_result: Threshold validation result (if available)
             report_url: URL to Zerberus dashboard report
+            threshold_config: The project's CVE threshold settings from the server
+            upload_error: Why the upload failed, if it did
         """
         self.validation_report_path = validation_report_path
         self.risk_report_path = risk_report_path
@@ -71,6 +75,11 @@ class PRCommentGenerator:
         # Load reports
         self.validation_report = self._load_json(validation_report_path)
         self.risk_report = self._load_json(risk_report_path)
+
+        self.threshold_config = threshold_config or self.scan_metadata.get("threshold_config") or {}
+        self.upload_error = upload_error
+        # Older scan metadata has no flag; those runs had risk scoring on.
+        self.risk_enabled = self.scan_metadata.get("statistics", {}).get("risk_assessment_enabled", True)
 
     def _load_json(self, file_path: str) -> Optional[Dict]:
         """Load JSON file safely."""
@@ -127,12 +136,27 @@ class PRCommentGenerator:
 
 ---"""
 
+    def _block_reason(self) -> str:
+        """Why the CVE threshold blocked the build, in the reader's terms."""
+        result = self.threshold_result
+        reasons = []
+        if result.critical_vulnerabilities_found and self.threshold_config.get("fail_on_critical", True):
+            reasons.append(f"{result.critical_count} critical CVE(s) found")
+        if result.threshold_exceeded:
+            reasons.append(
+                f"CVE severity score {result.calculated_score} exceeds threshold {result.max_threshold}"
+            )
+        return "; ".join(reasons) or result.failure_reason or "CVE threshold violated"
+
     def _generate_status_alert(self) -> str:
         """Generate status alert box based on scan results."""
+        # A failed upload fails the build first (exit 2 wins over exit 1).
+        if self.upload_error:
+            return f"""> [!CAUTION]
+> **Build Status: :x: UPLOAD FAILED** - {self.upload_error}"""
         if self.threshold_result and self.threshold_result.should_fail_build:
-            exceeded_by = self.threshold_result.calculated_score - self.threshold_result.max_threshold
             return f"""> [!WARNING]
-> **Build Status: :x: BLOCKED** - Threshold exceeded by {exceeded_by:.1f} points"""
+> **Build Status: :x: BLOCKED** - {self._block_reason()}"""
         elif self._has_critical_vulnerabilities():
             return f"""> [!CAUTION]
 > **Build Status: :warning: WARNING** - Critical vulnerabilities detected"""
@@ -271,21 +295,19 @@ class PRCommentGenerator:
         if not self.threshold_result:
             return ""
 
-        exceeded_by = self.threshold_result.calculated_score - self.threshold_result.max_threshold
-
-        markdown = f"""## :gear: Threshold Configuration & Breach Details
+        result = self.threshold_result
+        markdown = f"""## :gear: CVE Threshold Details
 
 > [!IMPORTANT]
-> **Breach Analysis**
-> - **Calculated Score**: {self.threshold_result.calculated_score:.1f} / {self.threshold_result.max_threshold:.1f}
-> - **Exceeded By**: +{exceeded_by:.1f} points
-> - **Failure Reason**: {self.threshold_result.failure_reason}
+> **Why the build is blocked:** {self._block_reason()}
+> - **CVE severity score**: {result.calculated_score} / {result.max_threshold} (weighted count of High, Medium and Low CVEs)
+> - **Critical CVEs**: {result.critical_count}
 
 **Threshold Configuration:**
 """
 
-        # Add threshold config table if available in metadata
-        threshold_config = self.scan_metadata.get("threshold_config", {})
+        # Add threshold config table if available
+        threshold_config = self.threshold_config
         if threshold_config:
             markdown += """
 | Setting | Value |
@@ -344,9 +366,13 @@ class PRCommentGenerator:
             "status": "passed",
         }
 
-        # Count packages and ecosystems
+        # Count packages from the validation report; the risk report is empty
+        # while risk scoring is off.
+        if self.validation_report:
+            stats["total_packages"] = self.validation_report.get("total_packages", 0)
         if self.risk_report and isinstance(self.risk_report, list):
-            stats["total_packages"] = len(self.risk_report)
+            if not stats["total_packages"]:
+                stats["total_packages"] = len(self.risk_report)
             for pkg in self.risk_report:
                 ecosystem = pkg.get("ecosystem", "unknown")
                 if ecosystem != "unknown":
@@ -371,7 +397,7 @@ class PRCommentGenerator:
                         stats["low"] += 1
 
         # Determine status
-        if self.threshold_result and self.threshold_result.should_fail_build:
+        if self.upload_error or (self.threshold_result and self.threshold_result.should_fail_build):
             stats["status"] = "failed"
         elif stats["critical"] > 0 or stats["total_vulnerabilities"] > 0:
             stats["status"] = "warning"
@@ -405,7 +431,7 @@ class PRCommentGenerator:
 
     def _has_high_risk_packages(self) -> bool:
         """Check if there are any high-risk packages."""
-        return bool(self._get_high_risk_packages(limit=1))
+        return self.risk_enabled and bool(self._get_high_risk_packages(limit=1))
 
     def _get_high_risk_packages(self, limit: int = 5) -> List[Dict]:
         """Get high-risk packages sorted by risk score."""

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .extractors.python.extractor import PythonExtractor
 from .extractors.scalibr.extractor import ScalibrExtractor
+from .extractors.scalibr.wrapper import ScalibrUnavailableError
 
 
 def extract(
@@ -102,6 +103,8 @@ def _extract_via_scalibr(project_path: str, config: Dict, cache) -> Dict[str, An
 
         return _create_empty_result()
 
+    except ScalibrUnavailableError:
+        raise  # a scan failure, not "no supported ecosystems"
     except Exception as e:
         print(f"⚠️ Scalibr extraction failed: {e}")
         return _create_empty_result()
