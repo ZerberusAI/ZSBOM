@@ -194,3 +194,21 @@ def test_every_api_call_uses_the_same_retries(client, clock, call):
         call(client)
     assert 2 <= clock.sleeps[0] < 3
     assert sum(clock.sleeps) == pytest.approx(RETRY_BUDGET_SECONDS)
+
+
+@pytest.mark.parametrize(
+    "call,path",
+    [
+        (lambda c: c.initiate_scan(Mock()), "trace-ai/scans/initiate"),
+        (lambda c: c.get_upload_urls("scan-1", ["sbom.json"]), "trace-ai/scans/scan-1/upload-urls"),
+        (lambda c: c.acknowledge_completion("scan-1", _completion()), "trace-ai/scans/scan-1/acknowledge-upload"),
+    ],
+    ids=["initiate_scan", "get_upload_urls", "acknowledge_completion"],
+)
+def test_uploads_go_to_the_trace_ai_service(client, call, path):
+    """The gateway routes /trace-ai/* to the Trace-AI service; /meta/* is meta-guard."""
+    client.session.post = Mock(return_value=_response(404, {"message": "stop here"}))
+    with pytest.raises(APIConnectionError):
+        call(client)
+    assert client.session.post.call_args.args[0] == f"https://api.test/trace-ai/api/v1/{path}"
+
