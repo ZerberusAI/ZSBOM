@@ -97,8 +97,8 @@ class ZerberusAPIClient:
     
     @_retry_api_call
     def initiate_scan(self, request: ScanInitiationRequest) -> ScanInitiationResponse:
-        """POST /meta/api/v1/trace-ai/scans/initiate"""
-        endpoint = f"meta/api/{self.version}/trace-ai/scans/initiate"
+        """POST /trace-ai/api/v1/trace-ai/scans/initiate"""
+        endpoint = f"trace-ai/api/{self.version}/trace-ai/scans/initiate"
         url = urljoin(self.config.api_url, endpoint)
         
         # Convert request to dict
@@ -154,8 +154,8 @@ class ZerberusAPIClient:
     
     @_retry_api_call
     def get_upload_urls(self, scan_id: str, files: List[str]) -> UploadUrlsResponse:
-        """POST /meta/api/v1/trace-ai/scans/{scan_id}/upload-urls"""
-        endpoint = f"meta/api/{self.version}/trace-ai/scans/{scan_id}/upload-urls"
+        """POST /trace-ai/api/v1/trace-ai/scans/{scan_id}/upload-urls"""
+        endpoint = f"trace-ai/api/{self.version}/trace-ai/scans/{scan_id}/upload-urls"
         url = urljoin(self.config.api_url, endpoint)
         
         payload = {"files": files}
@@ -186,8 +186,8 @@ class ZerberusAPIClient:
     
     @_retry_api_call
     def acknowledge_completion(self, scan_id: str, request: CompletionRequest) -> CompletionResponse:
-        """POST /meta/api/v1/trace-ai/scans/{scan_id}/acknowledge-upload"""
-        endpoint = f"meta/api/{self.version}/trace-ai/scans/{scan_id}/acknowledge-upload"
+        """POST /trace-ai/api/v1/trace-ai/scans/{scan_id}/acknowledge-upload"""
+        endpoint = f"trace-ai/api/{self.version}/trace-ai/scans/{scan_id}/acknowledge-upload"
         url = urljoin(self.config.api_url, endpoint)
         
         payload = {
